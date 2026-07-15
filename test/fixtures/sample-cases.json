@@ -1,0 +1,4 @@
+[
+  { "inputs": [["leo", "kiki", "eden"], ["eden", "kiki"]], "output": "leo" },
+  { "inputs": [["a", "a", "b"], ["a", "b"]], "output": "a" }
+]
