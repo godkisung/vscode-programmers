@@ -25,4 +25,16 @@ describe('runSampleTests', () => {
     expect(results[0].pass).toBe(false);
     expect(results[0].error).toContain('NameError');
   });
+
+  test('ignores debug print() output from the user solution and still parses the final JSON line', () => {
+    const results = runSampleTests(
+      path.join(fixturesDir, 'printing-solution.py'),
+      path.join(fixturesDir, 'sample-cases.json')
+    );
+
+    expect(results).toEqual([
+      { index: 0, pass: true, actual: 'leo', expected: 'leo' },
+      { index: 1, pass: true, actual: 'a', expected: 'a' },
+    ]);
+  });
 });

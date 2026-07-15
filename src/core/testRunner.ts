@@ -17,5 +17,11 @@ export function runSampleTests(solutionPath: string, casesPath: string): RunResu
     throw new Error(`runner.py가 오류로 종료되었습니다:\n${result.stderr}`);
   }
 
-  return JSON.parse(result.stdout);
+  const lines = result.stdout.trim().split('\n');
+  const lastLine = lines[lines.length - 1];
+  try {
+    return JSON.parse(lastLine);
+  } catch {
+    throw new Error(`runner.py의 출력을 해석하지 못했습니다.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  }
 }
