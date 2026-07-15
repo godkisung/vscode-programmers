@@ -17,8 +17,13 @@ describe('fetchProblemHtml / checkSession', () => {
         res.writeHead(302, { Location: '/login' });
         res.end();
       } else if (req.url === '/learn/courses/30/lessons') {
-        res.writeHead(200);
-        res.end('ok');
+        if (req.headers.cookie === '_fss_session=expired') {
+          res.writeHead(401);
+          res.end();
+        } else {
+          res.writeHead(200);
+          res.end('ok');
+        }
       } else {
         res.writeHead(404);
         res.end();
@@ -49,5 +54,9 @@ describe('fetchProblemHtml / checkSession', () => {
 
   test('checkSession returns true for a 200 response', async () => {
     await expect(checkSession('_fss_session=abc', baseUrl)).resolves.toBe(true);
+  });
+
+  test('checkSession returns false for a 401 response', async () => {
+    await expect(checkSession('_fss_session=expired', baseUrl)).resolves.toBe(false);
   });
 });

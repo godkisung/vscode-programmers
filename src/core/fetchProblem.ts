@@ -12,7 +12,7 @@ export async function fetchProblemHtml(
   cookie: string,
   baseUrl = 'https://school.programmers.co.kr'
 ): Promise<string> {
-  const url = `${baseUrl}/learn/courses/30/lessons/${problemId}`;
+  const url = `${baseUrl}/learn/courses/30/lessons/${encodeURIComponent(problemId)}`;
   const response = await fetch(url, {
     headers: buildHeaders(cookie),
     redirect: 'manual',
