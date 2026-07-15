@@ -11,6 +11,14 @@ import { ProblemData } from './core/types';
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let currentProblemDir: string | undefined;
+let outputChannel: vscode.OutputChannel | undefined;
+
+function getOutputChannel(): vscode.OutputChannel {
+  if (!outputChannel) {
+    outputChannel = vscode.window.createOutputChannel('Programmers');
+  }
+  return outputChannel;
+}
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
@@ -75,7 +83,9 @@ export function activate(context: vscode.ExtensionContext) {
       fs.mkdirSync(dir, { recursive: true });
       const solutionPath = path.join(dir, 'solution.py');
       const casesPath = path.join(dir, 'cases.json');
-      fs.writeFileSync(solutionPath, buildSolutionFile(problem));
+      if (!fs.existsSync(solutionPath)) {
+        fs.writeFileSync(solutionPath, buildSolutionFile(problem));
+      }
       fs.writeFileSync(casesPath, buildCasesFile(problem));
       currentProblemDir = dir;
 
@@ -108,7 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         const results = runSampleTests(solutionPath, casesPath);
         const passed = results.filter((r) => r.pass).length;
-        const channel = vscode.window.createOutputChannel('Programmers');
+        const channel = getOutputChannel();
         channel.clear();
         channel.appendLine(`${passed}/${results.length} 통과`);
         for (const r of results) {
