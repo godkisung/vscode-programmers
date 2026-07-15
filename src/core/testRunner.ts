@@ -4,10 +4,19 @@ import { RunResult } from './types';
 
 const RUNNER_PATH = path.join(__dirname, '..', '..', 'resources', 'runner.py');
 
-export function runSampleTests(solutionPath: string, casesPath: string): RunResult[] {
+export function runSampleTests(
+  solutionPath: string,
+  casesPath: string,
+  timeoutMs = 10000
+): RunResult[] {
   const result = spawnSync('python3', [RUNNER_PATH, solutionPath, casesPath], {
     encoding: 'utf-8',
+    timeout: timeoutMs,
   });
+
+  if (result.error && (result.error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+    throw new Error(`실행 시간이 ${timeoutMs / 1000}초를 초과했습니다. 무한 루프가 없는지 확인하세요.`);
+  }
 
   if (result.error) {
     throw new Error(`python3 실행에 실패했습니다: ${result.error.message}`);

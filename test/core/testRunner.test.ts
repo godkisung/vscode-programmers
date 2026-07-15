@@ -37,4 +37,14 @@ describe('runSampleTests', () => {
       { index: 1, pass: true, actual: 'a', expected: 'a' },
     ]);
   });
+
+  test('kills the process and reports a clear error when the solution times out', () => {
+    expect(() =>
+      runSampleTests(
+        path.join(fixturesDir, 'infinite-loop-solution.py'),
+        path.join(fixturesDir, 'sample-cases.json'),
+        500
+      )
+    ).toThrow('0.5초');
+  });
 });
