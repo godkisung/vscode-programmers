@@ -29,4 +29,12 @@ describe('parseCaseValue', () => {
     const result = parseCaseValue('not { a valid } value [');
     expect(result.ok).toBe(false);
   });
+
+  test('does not corrupt True/False/None occurring inside an already-valid double-quoted string, while still converting a co-occurring single-quoted token', () => {
+    expect(parseCaseValue('["True", \'ok\']')).toEqual({ ok: true, value: ['True', 'ok'] });
+  });
+
+  test('does not corrupt an apostrophe inside an already-valid double-quoted string, while still converting a co-occurring single-quoted token', () => {
+    expect(parseCaseValue("[\"don't\", 'ok']")).toEqual({ ok: true, value: ["don't", 'ok'] });
+  });
 });
