@@ -34,6 +34,17 @@ describe('buildSolutionFile', () => {
     const content = buildSolutionFile({ ...problem, skeletonCode: null });
     expect(content).toContain('def solution(participant, completion):\n    pass');
   });
+
+  test('includes a warning comment when some examples failed to parse', () => {
+    const content = buildSolutionFile(problem);
+    expect(content).toContain('⚠️ 예제 케이스 1개를 자동으로 파싱하지 못했습니다');
+  });
+
+  test('omits the warning comment when all examples parsed successfully', () => {
+    const allOk = { ...problem, examples: problem.examples.filter((e) => e.ok) };
+    const content = buildSolutionFile(allOk);
+    expect(content).not.toContain('⚠️');
+  });
 });
 
 describe('buildCasesFile', () => {
