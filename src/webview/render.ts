@@ -6,10 +6,11 @@ const ORIGIN = 'https://school.programmers.co.kr';
 export function renderProblemHtml(problem: ProblemData): string {
   const sanitized = sanitizeHtml(problem.descriptionHtml, {
     allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'h1', 'h2', 'h3']),
+    allowedSchemes: ['http', 'https'],
     allowedAttributes: {
       ...sanitizeHtml.defaults.allowedAttributes,
       img: ['src', 'alt'],
-      a: ['href'],
+      a: ['href', 'rel'],
     },
     transformTags: {
       img: (tagName, attribs) => ({
@@ -18,7 +19,7 @@ export function renderProblemHtml(problem: ProblemData): string {
       }),
       a: (tagName, attribs) => ({
         tagName,
-        attribs: { ...attribs, href: toAbsoluteUrl(attribs.href) },
+        attribs: { ...attribs, href: toAbsoluteUrl(attribs.href), rel: 'noopener noreferrer' },
       }),
     },
   });
@@ -34,7 +35,9 @@ export function renderProblemHtml(problem: ProblemData): string {
 
 function toAbsoluteUrl(url: string | undefined): string {
   if (!url) return '';
+  if (url.startsWith('#')) return url;
   if (/^https?:\/\//.test(url)) return url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return '';
   return new URL(url, ORIGIN).toString();
 }
 

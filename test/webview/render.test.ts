@@ -32,4 +32,28 @@ describe('renderProblemHtml', () => {
       'href="https://school.programmers.co.kr/learn/courses/30/lessons/42862"'
     );
   });
+
+  test('preserves a same-page anchor link instead of rewriting it to an absolute URL', () => {
+    const html = renderProblemHtml({
+      ...problem,
+      descriptionHtml: '<p><a href="#section">jump</a></p>',
+    });
+    expect(html).toContain('href="#section"');
+  });
+
+  test('strips a javascript: URL from a link href', () => {
+    const html = renderProblemHtml({
+      ...problem,
+      descriptionHtml: '<p><a href="javascript:alert(1)">click</a></p>',
+    });
+    expect(html).not.toContain('javascript:');
+  });
+
+  test('adds rel="noopener noreferrer" to links', () => {
+    const html = renderProblemHtml({
+      ...problem,
+      descriptionHtml: '<p><a href="/some/page">link</a></p>',
+    });
+    expect(html).toContain('rel="noopener noreferrer"');
+  });
 });
