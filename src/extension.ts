@@ -113,6 +113,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       currentPanel.title = problem.title;
       currentPanel.webview.html = renderProblemHtml(problem);
+      currentPanel.reveal(vscode.ViewColumn.Two);
     }),
 
     vscode.commands.registerCommand('programmers.runSampleTests', async () => {
