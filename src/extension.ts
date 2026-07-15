@@ -39,11 +39,15 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
         return;
       }
-      const ok = await checkSession(cookie);
-      if (ok) {
-        vscode.window.showInformationMessage('Programmers 연결 확인: 정상');
-      } else {
-        vscode.window.showErrorMessage('Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.');
+      try {
+        const ok = await checkSession(cookie);
+        if (ok) {
+          vscode.window.showInformationMessage('Programmers 연결 확인: 정상');
+        } else {
+          vscode.window.showErrorMessage('Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.');
+        }
+      } catch (err) {
+        vscode.window.showErrorMessage(`연결 확인 중 오류가 발생했습니다: ${(err as Error).message}`);
       }
     }),
 
@@ -59,6 +63,10 @@ export function activate(context: vscode.ExtensionContext) {
       });
       if (!rawInput) return;
       const id = extractProblemId(rawInput);
+      if (!/^\d+$/.test(id)) {
+        vscode.window.showErrorMessage('문제 번호를 인식하지 못했습니다. 숫자 또는 문제 페이지 URL을 입력하세요.');
+        return;
+      }
 
       const cookie = await getCookie(context.secrets);
       if (!cookie) {
