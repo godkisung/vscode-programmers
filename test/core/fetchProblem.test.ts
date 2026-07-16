@@ -6,14 +6,16 @@ describe('fetchProblemHtml / checkSession', () => {
   let server: http.Server;
   let baseUrl: string;
   let lastRequestHeaders: http.IncomingHttpHeaders = {};
+  let lastRequestUrl: string | undefined;
 
   beforeAll((done) => {
     server = http.createServer((req, res) => {
       lastRequestHeaders = req.headers;
-      if (req.url === '/learn/courses/30/lessons/1') {
+      lastRequestUrl = req.url;
+      if (req.url === '/learn/courses/30/lessons/1?language=python3') {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end('<html><body>ok</body></html>');
-      } else if (req.url === '/learn/courses/30/lessons/expired') {
+      } else if (req.url === '/learn/courses/30/lessons/expired?language=python3') {
         res.writeHead(302, { Location: '/login' });
         res.end();
       } else if (req.url === '/users/profile') {
@@ -44,6 +46,11 @@ describe('fetchProblemHtml / checkSession', () => {
     const html = await fetchProblemHtml('1', '_fss_session=abc', baseUrl);
     expect(html).toContain('ok');
     expect(lastRequestHeaders.cookie).toBe('_fss_session=abc');
+  });
+
+  test('requests the Python3 variant of the problem page', async () => {
+    await fetchProblemHtml('1', '_fss_session=abc', baseUrl);
+    expect(lastRequestUrl).toBe('/learn/courses/30/lessons/1?language=python3');
   });
 
   test('throws AuthExpiredError on a login redirect', async () => {
