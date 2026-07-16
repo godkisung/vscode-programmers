@@ -26,3 +26,8 @@ export interface RunResult {
   expected?: unknown;
   error?: string;
 }
+
+export interface SampleTestRun {
+  results: RunResult[];
+  debugOutput: string;
+}

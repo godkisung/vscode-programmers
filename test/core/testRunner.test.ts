@@ -5,7 +5,7 @@ describe('runSampleTests', () => {
   const fixturesDir = path.join(__dirname, '..', 'fixtures');
 
   test('runs the solution against each case and reports pass/fail', () => {
-    const results = runSampleTests(
+    const { results } = runSampleTests(
       path.join(fixturesDir, 'sample-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -17,7 +17,7 @@ describe('runSampleTests', () => {
   });
 
   test('reports a runtime exception without crashing the whole run', () => {
-    const results = runSampleTests(
+    const { results } = runSampleTests(
       path.join(fixturesDir, 'broken-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -26,8 +26,8 @@ describe('runSampleTests', () => {
     expect(results[0].error).toContain('NameError');
   });
 
-  test('ignores debug print() output from the user solution and still parses the final JSON line', () => {
-    const results = runSampleTests(
+  test('still parses the final JSON line when the user solution prints debug output', () => {
+    const { results } = runSampleTests(
       path.join(fixturesDir, 'printing-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -36,6 +36,26 @@ describe('runSampleTests', () => {
       { index: 0, pass: true, actual: 'leo', expected: 'leo' },
       { index: 1, pass: true, actual: 'a', expected: 'a' },
     ]);
+  });
+
+  test('captures the user solution\'s print() output as debugOutput', () => {
+    const { debugOutput } = runSampleTests(
+      path.join(fixturesDir, 'printing-solution.py'),
+      path.join(fixturesDir, 'sample-cases.json')
+    );
+
+    expect(debugOutput).toBe(
+      'debug: checking participants\ndebug: counter computed\ndebug: checking participants\ndebug: counter computed'
+    );
+  });
+
+  test('debugOutput is empty when the solution prints nothing', () => {
+    const { debugOutput } = runSampleTests(
+      path.join(fixturesDir, 'sample-solution.py'),
+      path.join(fixturesDir, 'sample-cases.json')
+    );
+
+    expect(debugOutput).toBe('');
   });
 
   test('kills the process and reports a clear error when the solution times out', () => {

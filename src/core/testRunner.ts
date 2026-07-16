@@ -1,6 +1,6 @@
 import { spawnSync } from 'child_process';
 import * as path from 'path';
-import { RunResult } from './types';
+import { RunResult, SampleTestRun } from './types';
 
 const RUNNER_PATH = path.join(__dirname, '..', '..', 'resources', 'runner.py');
 
@@ -8,7 +8,7 @@ export function runSampleTests(
   solutionPath: string,
   casesPath: string,
   timeoutMs = 10000
-): RunResult[] {
+): SampleTestRun {
   const result = spawnSync('python3', [RUNNER_PATH, solutionPath, casesPath], {
     encoding: 'utf-8',
     timeout: timeoutMs,
@@ -28,9 +28,12 @@ export function runSampleTests(
 
   const lines = result.stdout.trim().split('\n');
   const lastLine = lines[lines.length - 1];
+  const debugOutput = lines.slice(0, -1).join('\n');
+  let results: RunResult[];
   try {
-    return JSON.parse(lastLine);
+    results = JSON.parse(lastLine);
   } catch {
     throw new Error(`runner.py의 출력을 해석하지 못했습니다.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   }
+  return { results, debugOutput };
 }

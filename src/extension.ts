@@ -243,7 +243,7 @@ export function activate(context: vscode.ExtensionContext) {
       const casesPath = path.join(currentProblemDir, 'cases.json');
 
       try {
-        const results = runSampleTests(solutionPath, casesPath);
+        const { results, debugOutput } = runSampleTests(solutionPath, casesPath);
         const passed = results.filter((r) => r.pass).length;
         const channel = getOutputChannel();
         channel.clear();
@@ -258,6 +258,11 @@ export function activate(context: vscode.ExtensionContext) {
               `  [FAIL] case ${r.index}: expected=${JSON.stringify(r.expected)} actual=${JSON.stringify(r.actual)}`
             );
           }
+        }
+        if (debugOutput) {
+          channel.appendLine('');
+          channel.appendLine('--- 프로그램 출력 (print) ---');
+          channel.appendLine(debugOutput);
         }
         channel.show();
       } catch (err) {
