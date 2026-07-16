@@ -112,7 +112,42 @@
 1. **로그인은 순수 Chrome으로, 쿠키 읽기만 사후 CDP 연결 (권장 후보)** — Playwright의 `launchPersistentContext`로 Chrome을 "실행"하는 대신, `child_process`로 일반 Chrome 프로세스를 `--remote-debugging-port=<port>`만 열어서 띄운다(Playwright 자체 launch 플래그 없이). 사용자는 이 Chrome 창에서 완전히 정상적인(자동화 감지 트리거 없는) 상태로 로그인한다. 로그인이 끝난 뒤에야 `chromium.connectOverCDP('http://localhost:<port>')`로 붙어서 쿠키만 읽어온다. 로그인 시점에는 CDP가 전혀 개입하지 않으므로 구글의 자동화 감지에 걸리지 않는다 — 이미 커뮤니티에서 검증된 패턴이다 ([Sunwood-ai-labs/logged-in-google-chrome-skill](https://github.com/Sunwood-ai-labs/logged-in-google-chrome-skill)). 다만 Chrome 실행 자체를 Playwright의 `channel: 'chrome'` 해석 없이 직접 관리해야 하고(바이너리 경로 탐색, 포트 충돌 처리, 프로세스 생명주기 관리), 아키텍처 변경 폭이 있어 별도 설계/구현 사이클이 필요하다.
 2. **사용자의 실제(기본) Chrome 프로필에서 쿠키 파일을 직접 읽어 복호화** (예: [`@mherod/get-cookie`](https://github.com/mherod/get-cookie), macOS Keychain/Windows DPAPI/Linux 키링 기반 복호화) — 브라우저 자동화 자체가 필요 없어 구글 차단과 무관하지만, (a) 격리된 전용 프로필이 아니라 사용자의 실제 기본 프로필과 OS 키체인에 접근해야 해서 이 프로젝트의 "실제 프로필과 분리" 원칙과 배치되고, (b) 복호화 방식이 OS/Chrome 버전마다 달라 유지보수 부담이 크고, (c) 신뢰도가 검증되지 않은 서드파티 의존성이 키체인 접근 권한까지 요구해 보안 표면이 넓어진다. **권장하지 않음.**
 
-**현재 결론 (사용자 확인 대기):** 구글 계정 연동 사용자는 당분간 기존 수동 "Set Session Cookie" 경로를 사용해야 한다. 대안 1(사후 CDP 연결)로 자동 로그인 아키텍처를 바꿀지는 별도 브레인스토밍을 거쳐 결정한다.
+**결론:** 대안 1(사후 CDP 연결)로 전환하기로 결정. 아래 "개정: CDP 사후 연결 방식으로 전환" 섹션이 최종 설계이며, 이 섹션 위의 "컴포넌트 구성"/"데이터 흐름"/"에러 처리" 중 `launchPersistentContext` 관련 서술은 이 개정으로 대체된다 (쿠키 필터링/폴링/재시도 로직 등 나머지는 그대로 유지).
+
+## 개정: CDP 사후 연결 방식으로 전환
+
+**핵심 변경:** `chromium.launchPersistentContext()`로 Playwright가 Chrome을 직접 실행하던 것을, "Chrome을 순수 프로세스로 띄우고 로그인이 끝난 뒤에만 Playwright가 CDP로 붙는" 구조로 바꾼다. 로그인이 진행되는 동안 CDP가 전혀 개입하지 않으므로 구글이 감지할 "자동화 제어 브라우저" 상태 자체가 없다.
+
+**영향 범위:** `runAutoLogin(profileDir, signal): Promise<string>`의 외부 시그니처(입력/출력/에러 타입)는 그대로 유지된다. 따라서 **`src/extension.ts`는 수정 불필요** — 변경은 `src/core/autoLogin.ts` 내부 구현으로 국한된다. 쿠키 도메인 필터링, `checkSession()` 기반 폴링(2회 연속 성공 판정), `signal` 기반 취소/타임아웃 처리는 기존 로직을 그대로 재사용한다.
+
+### 컴포넌트 (모두 `src/core/autoLogin.ts` 내부, 신규/변경)
+
+1. **`resolveChromeExecutable()`** — OS별 후보 경로 배열 중 실제 존재하는 첫 경로를 선택하는 순수 함수. 파일시스템 체크 함수를 인자로 주입해 유닛 테스트 가능하게 한다 (`parser.ts`의 `TITLE_SELECTORS` 등과 동일한 "후보 배열 + 첫 매치" 스타일).
+   - Linux: `/opt/google/chrome/chrome`, `/usr/bin/google-chrome`, `/usr/bin/google-chrome-stable`
+   - macOS: `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+   - Windows: `%ProgramFiles%/Google/Chrome/Application/chrome.exe`, `%ProgramFiles(x86)%/Google/Chrome/Application/chrome.exe`
+   - 세 플랫폼 모두 1순위 후보가 래퍼 스크립트가 아니라 **실제 바이너리 자체**다 (`/usr/bin/google-chrome`류의 쉘 스크립트가 아님). 이 덕분에 종료 시 `child.kill()`이 fork/exec 체인 없이 실제 프로세스를 바로 잡는다 (아래 "종료 처리" 참고).
+2. **`spawnChrome(execPath, profileDir)`** — `child_process.spawn`으로 다음 인자만으로 실행: `--user-data-dir=<profileDir> --remote-debugging-port=0 --no-first-run --no-default-browser-check --new-window https://school.programmers.co.kr`. **포트는 하드코딩하지 않고 `0`(OS가 빈 포트 자동 배정)을 사용한다** — 고정 포트 충돌 가능성을 원천 제거.
+3. **`waitForDevToolsActivePort(profileDir, timeoutMs=15000)`** — Chrome은 `--remote-debugging-port=0`로 뜨면 실제 배정된 포트 번호를 자기 프로필 디렉토리 안의 `<profileDir>/DevToolsActivePort` 파일 첫 줄에 직접 써준다 (Puppeteer 등 주요 도구가 실제 사용하는 방식). 이 파일이 생성될 때까지 짧은 간격으로 폴링해 포트 번호를 읽어 반환한다. 이 방식은 포트 충돌뿐 아니라 "이게 정말 내가 띄운 Chrome이 맞는가"까지 함께 해결한다 — 그 파일은 우리 전용 프로필 디렉토리 안에만 존재하므로, 거기서 읽은 포트는 정의상 우리가 방금 띄운 프로세스의 것이다. 타임아웃 시 `BrowserLaunchError`.
+4. **`runAutoLogin(profileDir, signal)` 재작성:**
+   - `resolveChromeExecutable()` 실패 → `BrowserLaunchError`
+   - `spawnChrome()` 실패(spawn 자체 에러) → `BrowserLaunchError`
+   - `waitForDevToolsActivePort()`로 포트 확보 → 실패/타임아웃 → `BrowserLaunchError`
+   - `chromium.connectOverCDP('http://127.0.0.1:<port>')`로 연결 → 컨텍스트(cookies) 획득
+   - 이후 쿠키 폴링·판정 로직은 기존 Task 10 구현 그대로
+   - **종료 처리:** 성공/취소/에러 등 모든 종료 경로에서 spawn한 child process를 **직접 `kill()`**한다. `connectOverCDP()`로 얻은 `Browser`를 `.close()`해도 Playwright가 이 브라우저의 생명주기를 소유하지 않으므로 실제 프로세스는 안 죽고 연결만 끊어지기 때문이다 (Playwright 공식 동작). 로그인 성공 후 Chrome 프로세스는 **매번 종료**하기로 결정했다 — 백그라운드 유지는 구현 복잡도만 늘리고 이번 범위에서는 이득이 적음.
+
+### 알려진 리스크 (대응 코드 없음, 문서화만)
+
+- 이 방식은 "로그인 시점에 CDP가 개입하지 않는다"는 사실에 의존한다. 구글이 향후 탐지 로직을 강화해 "디버깅 포트가 열려있다는 사실"까지 감지하게 되면 이 방식도 다시 막힐 수 있다. 이 프로젝트는 이런 우회 기법 자체를 "봇 탐지를 속이기 위한 스텔스"로 채택한 게 아니라 "로그인 시점에 자동화가 실제로 개입하지 않는" 구조적 차이에 의존하는 것이지만, 그럼에도 구글 쪽 정책 변화에 취약할 수 있다는 점은 인지하고 있어야 한다.
+- 동일 프로파일 디렉토리를 사용하는 Chrome 프로세스가 비정상 종료로 남아있는 경우(잠김) 새로 spawn한 Chrome이 실패할 수 있다. 이는 Task 10에서 이미 만든 "프로파일 초기화 후 재시도" 복구 흐름(`BrowserLaunchError` 발생 시 프로파일 디렉토리 삭제 후 재시도)이 그대로 커버한다 — 새 코드 불필요.
+
+### 테스트 (변경분)
+
+- **단위 테스트(신규):** `resolveChromeExecutable`의 후보 선택 로직 — 파일시스템 체크 함수를 주입해 "후보 중 존재하는 첫 경로 선택"/"아무것도 없으면 null" 등을 검증
+- **수동 검증 (추가 항목):** 기존 Task 10의 수동 검증 체크리스트에 다음을 추가
+  1. 구글 계정으로 연동된 Programmers 계정으로 실제 로그인 시도 시 더 이상 "This browser or app may not be secure" 차단이 발생하지 않는지
+  2. 로그인 성공/취소/에러 등 모든 경로에서 Chrome 프로세스가 실제로 완전히 종료되는지 (OS 작업 관리자/`ps`로 확인 — `child.kill()`이 예상대로 동작하는지)
 
 ## 향후 확장 (범위 밖, 참고용)
 
