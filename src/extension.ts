@@ -36,7 +36,8 @@ async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> 
     const cookie = await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: 'Programmers 로그인 — 뜨는 브라우저 창에서 로그인해주세요...',
+        title:
+          'Programmers 로그인 — 뜨는 브라우저 창에서 로그인해주세요... (구글 계정 연동 로그인은 구글이 자동화된 브라우저를 차단해 지원되지 않습니다 — 이 경우 취소 후 "Set Session Cookie"를 이용하세요)',
         cancellable: true,
       },
       async (_progress, token) => {
@@ -50,7 +51,9 @@ async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> 
   } catch (err) {
     if (err instanceof LoginCancelledError) {
       if (timedOut) {
-        vscode.window.showErrorMessage('로그인 시간이 초과되었습니다.');
+        vscode.window.showErrorMessage(
+          '로그인 시간이 초과되었습니다. 구글 계정으로 로그인하는 경우 구글이 자동화된 브라우저의 로그인을 차단해 완료되지 않을 수 있습니다 — 이 경우 "Set Session Cookie"로 수동 입력해주세요.'
+        );
       }
       return false;
     }
