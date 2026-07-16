@@ -31,10 +31,10 @@ export async function fetchProblemHtml(
 
 export async function checkSession(
   cookie: string,
-  baseUrl = 'https://school.programmers.co.kr',
+  baseUrl = 'https://programmers.co.kr',
   onResponse: (status: number, location: string | null) => void = () => undefined
 ): Promise<boolean> {
-  const response = await fetch(`${baseUrl}/learn/courses/30/lessons`, {
+  const response = await fetch(`${baseUrl}/users/profile`, {
     headers: buildHeaders(cookie),
     redirect: 'manual',
   });
