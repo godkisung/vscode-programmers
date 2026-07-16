@@ -97,6 +97,23 @@
   3. 로그인 중 취소 버튼을 누르면 브라우저가 정상 종료되는지
   4. `checkConnection` 실패 후 에러 메시지의 [로그인] 버튼이 자동 로그인 플로우로 이어지고, 성공 시 `checkConnection`이 1회 자동 재시도되는지
 
+## 확인된 제한사항: 구글 계정 연동 로그인 차단 (실사용 테스트 결과)
+
+**증상:** Programmers 계정이 구글(Google) 소셜 로그인으로 연동된 사용자가 자동 로그인 창에서 구글 로그인을 시도하면, 이메일/비밀번호(및 2단계 인증)를 정상적으로 입력해도 구글이 다음 메시지로 로그인 자체를 거부한다:
+
+> Couldn't sign you in — This browser or app may not be secure.
+
+**원인:** `chromium.launchPersistentContext()`로 Playwright가 직접 실행한 Chrome은 CDP(Chrome DevTools Protocol)가 처음부터 연결된 "자동화 제어 브라우저" 상태로 뜬다. 구글은 OAuth 로그인 시 이 상태를 감지해 보안상 이유로 차단한다. 이는 프로필 문제가 아니라 **구글이 자동화 도구로 제어되는 브라우저의 OAuth 로그인을 정책적으로 차단**하는 것이며, Playwright/Puppeteer 기반 자동화에서 널리 보고된 현상이다 ([microsoft/playwright#19420](https://github.com/microsoft/playwright/issues/19420), [microsoft/playwright#3060](https://github.com/microsoft/playwright/issues/3060)).
+
+**채택하지 않는 대응 (명시적 배제):** `navigator.webdriver` 값을 숨기거나 자동화 관련 플래그를 지우는 "스텔스" 기법은 구글의 봇 탐지를 의도적으로 우회하는 것으로, 구글 이용약관 위반 소지가 있고 구글이 탐지 방식을 바꾸면 다시 막히는 등 근본적으로 불안정하다. 이 프로젝트에서는 이런 우회 기법을 사용하지 않는다.
+
+**리서치한 대안:**
+
+1. **로그인은 순수 Chrome으로, 쿠키 읽기만 사후 CDP 연결 (권장 후보)** — Playwright의 `launchPersistentContext`로 Chrome을 "실행"하는 대신, `child_process`로 일반 Chrome 프로세스를 `--remote-debugging-port=<port>`만 열어서 띄운다(Playwright 자체 launch 플래그 없이). 사용자는 이 Chrome 창에서 완전히 정상적인(자동화 감지 트리거 없는) 상태로 로그인한다. 로그인이 끝난 뒤에야 `chromium.connectOverCDP('http://localhost:<port>')`로 붙어서 쿠키만 읽어온다. 로그인 시점에는 CDP가 전혀 개입하지 않으므로 구글의 자동화 감지에 걸리지 않는다 — 이미 커뮤니티에서 검증된 패턴이다 ([Sunwood-ai-labs/logged-in-google-chrome-skill](https://github.com/Sunwood-ai-labs/logged-in-google-chrome-skill)). 다만 Chrome 실행 자체를 Playwright의 `channel: 'chrome'` 해석 없이 직접 관리해야 하고(바이너리 경로 탐색, 포트 충돌 처리, 프로세스 생명주기 관리), 아키텍처 변경 폭이 있어 별도 설계/구현 사이클이 필요하다.
+2. **사용자의 실제(기본) Chrome 프로필에서 쿠키 파일을 직접 읽어 복호화** (예: [`@mherod/get-cookie`](https://github.com/mherod/get-cookie), macOS Keychain/Windows DPAPI/Linux 키링 기반 복호화) — 브라우저 자동화 자체가 필요 없어 구글 차단과 무관하지만, (a) 격리된 전용 프로필이 아니라 사용자의 실제 기본 프로필과 OS 키체인에 접근해야 해서 이 프로젝트의 "실제 프로필과 분리" 원칙과 배치되고, (b) 복호화 방식이 OS/Chrome 버전마다 달라 유지보수 부담이 크고, (c) 신뢰도가 검증되지 않은 서드파티 의존성이 키체인 접근 권한까지 요구해 보안 표면이 넓어진다. **권장하지 않음.**
+
+**현재 결론 (사용자 확인 대기):** 구글 계정 연동 사용자는 당분간 기존 수동 "Set Session Cookie" 경로를 사용해야 한다. 대안 1(사후 CDP 연결)로 자동 로그인 아키텍처를 바꿀지는 별도 브레인스토밍을 거쳐 결정한다.
+
 ## 향후 확장 (범위 밖, 참고용)
 
 - 다중 계정 전환(계정별 별도 프로파일 관리)
