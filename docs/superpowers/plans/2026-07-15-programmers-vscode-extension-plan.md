@@ -1791,3 +1791,319 @@ Expected: exits 0
 git add src/core/autoLogin.ts test/core/autoLogin.test.ts src/extension.ts package.json package-lock.json
 git commit -m "feat: add Playwright-based automatic login with manual-entry fallback"
 ```
+
+---
+
+## Task 10.1: Replace launchPersistentContext with spawn + post-login CDP attach
+
+**Spec:** `docs/superpowers/specs/2026-07-16-auto-login-design.md`, section "개정: CDP 사후 연결 방식으로 전환"
+
+**Background:** Live testing found that Google blocks OAuth sign-in ("This browser or app may not be secure") when Programmers is accessed through a Chrome instance that Playwright's `chromium.launchPersistentContext()` launched directly, because that Chrome carries CDP (Chrome DevTools Protocol) attached from the moment it starts. The fix: spawn a plain Chrome process ourselves (no Playwright launch flags, so no automation state during login) and only attach Playwright via `chromium.connectOverCDP()` — to read cookies only — after the user has already finished logging in normally.
+
+**Files:**
+- Modify: `src/core/autoLogin.ts` (full rewrite of the launch mechanism; `filterAndFormatCookies`, `sleep`, error classes, and the cookie-polling/consecutive-success logic are unchanged)
+- Modify: `test/core/autoLogin.test.ts` (add tests for the new `resolveChromeExecutable`; all existing tests keep passing unmodified)
+- **`src/extension.ts` is NOT modified.** `runAutoLogin(profileDir: string, signal: AbortSignal): Promise<string>`'s signature, and the `BrowserLaunchError`/`LoginCancelledError` types it throws, are unchanged — `extension.ts` only calls this function and doesn't know or care how it's implemented internally.
+
+**Interfaces:**
+- Consumes: `checkSession` from `src/core/fetchProblem.ts` (Task 6) — unchanged
+- Produces (unchanged from Task 10): `filterAndFormatCookies(cookies: CookiePair[], targetHost?: string): string`, `sleep(ms: number, signal: AbortSignal): Promise<void>`, `runAutoLogin(profileDir: string, signal: AbortSignal): Promise<string>`, `class BrowserLaunchError extends Error`, `class LoginCancelledError extends Error`, `interface CookiePair { name: string; value: string; domain: string }`
+- Produces (new): `resolveChromeExecutable(platform?: NodeJS.Platform, exists?: (p: string) => boolean, env?: NodeJS.ProcessEnv): string | null`
+- Removed (no longer needed — Chrome now navigates to the target URL via its own CLI argument at spawn time, so Playwright never drives navigation): the private `gotoUnlessAborted` helper and the `Page` import from `playwright-core`
+
+**Only `resolveChromeExecutable`'s candidate-selection logic is unit-tested.** `spawnChrome`, `waitForDevToolsActivePort`, and the CDP-connect/polling flow in `runAutoLogin` drive a real Chrome process and real files on disk — not testable under Jest. They are verified manually in Step 9, same as the rest of Task 10.
+
+- [ ] **Step 1: Write the failing tests for `resolveChromeExecutable` — add to `test/core/autoLogin.test.ts`**
+
+Add `resolveChromeExecutable` to the existing import line at the top of the file:
+
+```ts
+import {
+  filterAndFormatCookies,
+  BrowserLaunchError,
+  LoginCancelledError,
+  sleep,
+  resolveChromeExecutable,
+} from '../../src/core/autoLogin';
+```
+
+Add this new `describe` block after the existing `sleep` block:
+
+```ts
+describe('resolveChromeExecutable', () => {
+  test('returns the first Linux candidate that exists', () => {
+    const exists = (p: string) => p === '/opt/google/chrome/chrome';
+    expect(resolveChromeExecutable('linux', exists, {})).toBe('/opt/google/chrome/chrome');
+  });
+
+  test('falls through to a later Linux candidate when earlier ones are missing', () => {
+    const exists = (p: string) => p === '/usr/bin/google-chrome-stable';
+    expect(resolveChromeExecutable('linux', exists, {})).toBe('/usr/bin/google-chrome-stable');
+  });
+
+  test('returns null on Linux when no candidate exists', () => {
+    expect(resolveChromeExecutable('linux', () => false, {})).toBeNull();
+  });
+
+  test('returns the macOS app bundle path when it exists', () => {
+    const macPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const exists = (p: string) => p === macPath;
+    expect(resolveChromeExecutable('darwin', exists, {})).toBe(macPath);
+  });
+
+  test('returns null on macOS when the app bundle is missing', () => {
+    expect(resolveChromeExecutable('darwin', () => false, {})).toBeNull();
+  });
+
+  test('builds the Windows path from the ProgramFiles env var, using backslash separators regardless of host OS', () => {
+    const expected = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    const exists = (p: string) => p === expected;
+    expect(resolveChromeExecutable('win32', exists, { ProgramFiles: 'C:\\Program Files' })).toBe(expected);
+  });
+
+  test('falls back to the x86 ProgramFiles candidate on Windows', () => {
+    const expected = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+    const exists = (p: string) => p === expected;
+    expect(
+      resolveChromeExecutable('win32', exists, {
+        ProgramFiles: 'C:\\Program Files',
+        'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      })
+    ).toBe(expected);
+  });
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx jest test/core/autoLogin.test.ts`
+Expected: FAIL — `resolveChromeExecutable` is not exported by `src/core/autoLogin.ts` yet
+
+- [ ] **Step 3: Replace `src/core/autoLogin.ts` entirely**
+
+```ts
+import { spawn, ChildProcess } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import { chromium, Browser } from 'playwright-core';
+import { checkSession } from './fetchProblem';
+
+export class BrowserLaunchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BrowserLaunchError';
+  }
+}
+
+export class LoginCancelledError extends Error {
+  constructor() {
+    super('로그인이 취소되었습니다.');
+    this.name = 'LoginCancelledError';
+  }
+}
+
+export interface CookiePair {
+  name: string;
+  value: string;
+  domain: string;
+}
+
+const TARGET_HOST = 'school.programmers.co.kr';
+const POLL_INTERVAL_MS = 2500;
+const REQUIRED_CONSECUTIVE_SUCCESSES = 2;
+const CDP_READY_TIMEOUT_MS = 15000;
+
+export function filterAndFormatCookies(cookies: CookiePair[], targetHost: string = TARGET_HOST): string {
+  return cookies
+    .filter((c) => domainMatches(c.domain, targetHost))
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+}
+
+function domainMatches(cookieDomain: string, targetHost: string): boolean {
+  const normalized = cookieDomain.replace(/^\./, '');
+  return normalized === targetHost || targetHost.endsWith(`.${normalized}`);
+}
+
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
+
+export function resolveChromeExecutable(
+  platform: NodeJS.Platform = process.platform,
+  exists: (p: string) => boolean = fs.existsSync,
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  return chromeCandidates(platform, env).find((p) => exists(p)) ?? null;
+}
+
+function chromeCandidates(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
+  if (platform === 'win32') {
+    return [
+      path.win32.join(env['ProgramFiles'] || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.win32.join(
+        env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+        'Google',
+        'Chrome',
+        'Application',
+        'chrome.exe'
+      ),
+    ];
+  }
+  if (platform === 'darwin') {
+    return ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+  }
+  return ['/opt/google/chrome/chrome', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'];
+}
+
+function spawnChrome(execPath: string, profileDir: string): ChildProcess {
+  return spawn(
+    execPath,
+    [
+      `--user-data-dir=${profileDir}`,
+      '--remote-debugging-port=0',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--new-window',
+      `https://${TARGET_HOST}`,
+    ],
+    { stdio: 'ignore' }
+  );
+}
+
+function clearStaleDevToolsActivePort(profileDir: string): void {
+  try {
+    fs.unlinkSync(path.join(profileDir, 'DevToolsActivePort'));
+  } catch {
+    // no previous file from an earlier run — nothing to clear
+  }
+}
+
+async function waitForDevToolsActivePort(
+  profileDir: string,
+  timeoutMs: number,
+  signal: AbortSignal
+): Promise<number> {
+  const filePath = path.join(profileDir, 'DevToolsActivePort');
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (signal.aborted) {
+      throw new LoginCancelledError();
+    }
+    if (fs.existsSync(filePath)) {
+      const firstLine = fs.readFileSync(filePath, 'utf-8').split('\n')[0].trim();
+      const port = Number(firstLine);
+      if (Number.isFinite(port) && port > 0) {
+        return port;
+      }
+    }
+    await sleep(200, signal);
+  }
+
+  throw new BrowserLaunchError('Chrome의 디버깅 포트를 확인하지 못했습니다 (시간 초과).');
+}
+
+export async function runAutoLogin(profileDir: string, signal: AbortSignal): Promise<string> {
+  const execPath = resolveChromeExecutable();
+  if (!execPath) {
+    throw new BrowserLaunchError('Chrome 실행 파일을 찾지 못했습니다.');
+  }
+
+  fs.mkdirSync(profileDir, { recursive: true });
+  clearStaleDevToolsActivePort(profileDir);
+
+  let child: ChildProcess;
+  try {
+    child = spawnChrome(execPath, profileDir);
+  } catch (err) {
+    throw new BrowserLaunchError(`Chrome을 실행하지 못했습니다: ${(err as Error).message}`);
+  }
+
+  let port: number;
+  try {
+    port = await waitForDevToolsActivePort(profileDir, CDP_READY_TIMEOUT_MS, signal);
+  } catch (err) {
+    child.kill();
+    throw err;
+  }
+
+  let browser: Browser;
+  try {
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  } catch (err) {
+    child.kill();
+    throw new BrowserLaunchError(`Chrome에 연결하지 못했습니다: ${(err as Error).message}`);
+  }
+
+  try {
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+
+    let consecutiveSuccesses = 0;
+    while (!signal.aborted) {
+      const cookies = await context.cookies();
+      const cookieString = filterAndFormatCookies(cookies);
+      const valid = cookieString.length > 0 && (await checkSession(cookieString));
+
+      if (valid) {
+        consecutiveSuccesses++;
+        if (consecutiveSuccesses >= REQUIRED_CONSECUTIVE_SUCCESSES) {
+          return cookieString;
+        }
+      } else {
+        consecutiveSuccesses = 0;
+      }
+
+      await sleep(POLL_INTERVAL_MS, signal);
+    }
+
+    throw new LoginCancelledError();
+  } finally {
+    child.kill();
+  }
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx jest test/core/autoLogin.test.ts`
+Expected: PASS (17 tests — the original 10 plus 7 new `resolveChromeExecutable` tests)
+
+- [ ] **Step 5: Run the full suite to confirm no regressions**
+
+Run: `npm test`
+Expected: PASS (54 tests — the existing 47 plus the 7 new ones)
+
+- [ ] **Step 6: Verify compilation**
+
+Run: `npm run compile`
+Expected: exits 0
+
+- [ ] **Step 7: Manual verification in the Extension Development Host**
+
+This requires a machine with a real display (not the remote/headless dev box) — the whole point of this change is a real Chrome window the user interacts with directly.
+
+1. Press `F5`, open any workspace folder in the Extension Development Host
+2. Run "Programmers: Login (Auto)" — expect a visible Chrome window to open directly at `school.programmers.co.kr` (no intermediate blank tab)
+3. **If your Programmers account is linked via Google:** sign in with Google in that window and confirm it no longer shows "This browser or app may not be secure" — sign-in should complete normally
+4. Confirm the login notification auto-dismisses with "로그인에 성공했습니다" shortly after login completes, same as before
+5. Run "Programmers: Check Connection" → expect "연결 확인: 정상"
+6. After the flow completes (success, cancel, or timeout), check your OS process list (Task Manager / Activity Monitor / `ps aux | grep -i chrome`) and confirm no leftover Chrome process remains running from this profile directory
+7. Run "Programmers: Login (Auto)" again, click "취소" while the Chrome window is still starting up (before finishing login) — confirm the window closes and no leftover process remains
+8. Re-run the existing Task 10 profile-reset check: force a launch failure (e.g. temporarily rename the Chrome binary, or corrupt the profile dir) and confirm the "프로파일 초기화 후 재시도" flow still works
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/core/autoLogin.ts test/core/autoLogin.test.ts
+git commit -m "fix: spawn Chrome directly and attach CDP only after login to avoid Google's automation block"
+```
