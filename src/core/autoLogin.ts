@@ -192,7 +192,11 @@ export async function runAutoLogin(
     while (!signal.aborted) {
       const cookies = await context.cookies();
       const cookieString = filterAndFormatCookies(cookies);
-      const valid = cookieString.length > 0 && (await checkSession(cookieString));
+      const valid =
+        cookieString.length > 0 &&
+        (await checkSession(cookieString, undefined, (status, location) => {
+          onLog(`  ↳ checkSession 응답: HTTP ${status}${location ? `, Location: ${location}` : ''}`);
+        }));
       pollCount++;
       onLog(
         `폴링 #${pollCount}: 컨텍스트 쿠키 ${cookies.length}개, 대상 도메인 쿠키 ${

@@ -31,11 +31,13 @@ export async function fetchProblemHtml(
 
 export async function checkSession(
   cookie: string,
-  baseUrl = 'https://school.programmers.co.kr'
+  baseUrl = 'https://school.programmers.co.kr',
+  onResponse: (status: number, location: string | null) => void = () => undefined
 ): Promise<boolean> {
   const response = await fetch(`${baseUrl}/learn/courses/30/lessons`, {
     headers: buildHeaders(cookie),
     redirect: 'manual',
   });
+  onResponse(response.status, response.headers.get('location'));
   return response.status >= 200 && response.status < 300;
 }
