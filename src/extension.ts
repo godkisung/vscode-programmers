@@ -42,7 +42,10 @@ async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> 
       },
       async (_progress, token) => {
         token.onCancellationRequested(() => controller.abort());
-        return runAutoLogin(profileDir, controller.signal);
+        const channel = getOutputChannel();
+        channel.appendLine('--- Programmers 로그인 시작 ---');
+        channel.show(true);
+        return runAutoLogin(profileDir, controller.signal, (msg) => channel.appendLine(`[login] ${msg}`));
       }
     );
     await setCookie(context.secrets, cookie);

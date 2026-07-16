@@ -134,11 +134,16 @@ async function waitForDevToolsActivePort(
   throw new BrowserLaunchError('Chrome의 디버깅 포트를 확인하지 못했습니다 (시간 초과).');
 }
 
-export async function runAutoLogin(profileDir: string, signal: AbortSignal): Promise<string> {
+export async function runAutoLogin(
+  profileDir: string,
+  signal: AbortSignal,
+  onLog: (msg: string) => void = () => undefined
+): Promise<string> {
   const execPath = resolveChromeExecutable();
   if (!execPath) {
     throw new BrowserLaunchError('Chrome 실행 파일을 찾지 못했습니다.');
   }
+  onLog(`Chrome 실행 파일: ${execPath}`);
 
   fs.mkdirSync(profileDir, { recursive: true });
   clearStaleDevToolsActivePort(profileDir);
@@ -149,6 +154,7 @@ export async function runAutoLogin(profileDir: string, signal: AbortSignal): Pro
   } catch (err) {
     throw new BrowserLaunchError(`Chrome을 실행하지 못했습니다: ${(err as Error).message}`);
   }
+  onLog(`Chrome 프로세스 시작됨 (PID ${child.pid})`);
 
   let earlySpawnError: Error | undefined;
   child.on('error', (err) => {
@@ -162,6 +168,7 @@ export async function runAutoLogin(profileDir: string, signal: AbortSignal): Pro
     child.kill();
     throw err;
   }
+  onLog(`CDP 디버깅 포트 확인됨: ${port}`);
 
   let browser: Browser;
   try {
@@ -170,15 +177,28 @@ export async function runAutoLogin(profileDir: string, signal: AbortSignal): Pro
     child.kill();
     throw new BrowserLaunchError(`Chrome에 연결하지 못했습니다: ${(err as Error).message}`);
   }
+  onLog('CDP 연결 성공');
 
   try {
-    const context = browser.contexts()[0] ?? (await browser.newContext());
+    const existingContexts = browser.contexts();
+    onLog(`브라우저 컨텍스트 개수: ${existingContexts.length}`);
+    const context = existingContexts[0] ?? (await browser.newContext());
+    if (existingContexts.length === 0) {
+      onLog('경고: 기존 컨텍스트를 찾지 못해 새 빈 컨텍스트를 생성했습니다 — 이 컨텍스트는 로그인 창과 무관할 수 있습니다.');
+    }
 
     let consecutiveSuccesses = 0;
+    let pollCount = 0;
     while (!signal.aborted) {
       const cookies = await context.cookies();
       const cookieString = filterAndFormatCookies(cookies);
       const valid = cookieString.length > 0 && (await checkSession(cookieString));
+      pollCount++;
+      onLog(
+        `폴링 #${pollCount}: 컨텍스트 쿠키 ${cookies.length}개, 대상 도메인 쿠키 ${
+          cookieString.length > 0 ? '있음' : '없음'
+        }, 세션 유효성=${valid}`
+      );
 
       if (valid) {
         consecutiveSuccesses++;
