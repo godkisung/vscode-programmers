@@ -65,10 +65,23 @@ async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> 
       }
       return false;
     }
-    vscode.window.showErrorMessage(`로그인 중 오류가 발생했습니다: ${(err as Error).message}`);
+    vscode.window.showErrorMessage(
+      `로그인 중 오류가 발생했습니다: ${(err as Error).message} "Programmers: Set Session Cookie"로 수동 입력해주세요.`
+    );
     return false;
   } finally {
     clearTimeout(timeoutHandle);
+  }
+}
+
+async function offerLoginAndRetry(
+  context: vscode.ExtensionContext,
+  message: string,
+  retry: () => Promise<void>
+): Promise<void> {
+  const choice = await vscode.window.showErrorMessage(message, '로그인');
+  if (choice === '로그인' && (await runLoginFlow(context))) {
+    await retry();
   }
 }
 
@@ -82,13 +95,9 @@ async function checkConnectionOnce(
       vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
       return;
     }
-    const choice = await vscode.window.showErrorMessage(
-      '먼저 세션 쿠키를 설정하거나 로그인하세요.',
-      '로그인'
+    await offerLoginAndRetry(context, '먼저 세션 쿠키를 설정하거나 로그인하세요.', () =>
+      checkConnectionOnce(context, false)
     );
-    if (choice === '로그인' && (await runLoginFlow(context))) {
-      await checkConnectionOnce(context, false);
-    }
     return;
   }
 
@@ -102,13 +111,11 @@ async function checkConnectionOnce(
       vscode.window.showErrorMessage('Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.');
       return;
     }
-    const choice = await vscode.window.showErrorMessage(
+    await offerLoginAndRetry(
+      context,
       'Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.',
-      '로그인'
+      () => checkConnectionOnce(context, false)
     );
-    if (choice === '로그인' && (await runLoginFlow(context))) {
-      await checkConnectionOnce(context, false);
-    }
   } catch (err) {
     vscode.window.showErrorMessage(`연결 확인 중 오류가 발생했습니다: ${(err as Error).message}`);
   }
@@ -126,13 +133,9 @@ async function openProblemOnce(
       vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
       return;
     }
-    const choice = await vscode.window.showErrorMessage(
-      '먼저 세션 쿠키를 설정하거나 로그인하세요.',
-      '로그인'
+    await offerLoginAndRetry(context, '먼저 세션 쿠키를 설정하거나 로그인하세요.', () =>
+      openProblemOnce(context, workspaceFolder, id, false)
     );
-    if (choice === '로그인' && (await runLoginFlow(context))) {
-      await openProblemOnce(context, workspaceFolder, id, false);
-    }
     return;
   }
 
@@ -146,10 +149,9 @@ async function openProblemOnce(
         vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다. 브라우저에서 다시 복사해 설정해주세요.');
         return;
       }
-      const choice = await vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다.', '로그인');
-      if (choice === '로그인' && (await runLoginFlow(context))) {
-        await openProblemOnce(context, workspaceFolder, id, false);
-      }
+      await offerLoginAndRetry(context, '쿠키가 만료된 것 같습니다.', () =>
+        openProblemOnce(context, workspaceFolder, id, false)
+      );
     } else {
       vscode.window.showErrorMessage(`문제를 불러오지 못했습니다: ${(err as Error).message}`);
     }

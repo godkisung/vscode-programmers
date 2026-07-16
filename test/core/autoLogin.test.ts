@@ -1,4 +1,4 @@
-import { filterAndFormatCookies, BrowserLaunchError, LoginCancelledError } from '../../src/core/autoLogin';
+import { filterAndFormatCookies, BrowserLaunchError, LoginCancelledError, sleep } from '../../src/core/autoLogin';
 
 describe('filterAndFormatCookies', () => {
   test('keeps a cookie whose domain exactly matches the target host', () => {
@@ -60,5 +60,30 @@ describe('error classes', () => {
     const err = new LoginCancelledError();
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('LoginCancelledError');
+  });
+});
+
+describe('sleep', () => {
+  test('resolves immediately when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const start = Date.now();
+    await sleep(5000, controller.signal);
+    expect(Date.now() - start).toBeLessThan(100);
+  });
+
+  test('resolves early when the signal aborts mid-wait', async () => {
+    const controller = new AbortController();
+    const start = Date.now();
+    setTimeout(() => controller.abort(), 20);
+    await sleep(5000, controller.signal);
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  test('resolves after ms elapses when never aborted', async () => {
+    const controller = new AbortController();
+    const start = Date.now();
+    await sleep(50, controller.signal);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(45);
   });
 });

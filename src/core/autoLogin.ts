@@ -1,4 +1,4 @@
-import { chromium, BrowserContext } from 'playwright-core';
+import { chromium, BrowserContext, Page } from 'playwright-core';
 import { checkSession } from './fetchProblem';
 
 export class BrowserLaunchError extends Error {
@@ -37,13 +37,40 @@ function domainMatches(cookieDomain: string, targetHost: string): boolean {
   return normalized === targetHost || targetHost.endsWith(`.${normalized}`);
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
     signal.addEventListener('abort', () => {
       clearTimeout(timer);
       resolve();
     }, { once: true });
+  });
+}
+
+async function gotoUnlessAborted(page: Page, url: string, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    throw new LoginCancelledError();
+  }
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(new LoginCancelledError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    page.goto(url).then(
+      () => {
+        cleanup();
+        resolve();
+      },
+      (err) => {
+        cleanup();
+        reject(err);
+      }
+    );
   });
 }
 
@@ -60,7 +87,7 @@ export async function runAutoLogin(profileDir: string, signal: AbortSignal): Pro
 
   try {
     const page = context.pages()[0] ?? (await context.newPage());
-    await page.goto(`https://${TARGET_HOST}`);
+    await gotoUnlessAborted(page, `https://${TARGET_HOST}`, signal);
 
     let consecutiveSuccesses = 0;
     while (!signal.aborted) {
