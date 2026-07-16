@@ -107,7 +107,8 @@ function clearStaleDevToolsActivePort(profileDir: string): void {
 async function waitForDevToolsActivePort(
   profileDir: string,
   timeoutMs: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  getSpawnError: () => Error | undefined
 ): Promise<number> {
   const filePath = path.join(profileDir, 'DevToolsActivePort');
   const deadline = Date.now() + timeoutMs;
@@ -115,6 +116,10 @@ async function waitForDevToolsActivePort(
   while (Date.now() < deadline) {
     if (signal.aborted) {
       throw new LoginCancelledError();
+    }
+    const spawnError = getSpawnError();
+    if (spawnError) {
+      throw new BrowserLaunchError(`Chrome을 실행하지 못했습니다: ${spawnError.message}`);
     }
     if (fs.existsSync(filePath)) {
       const firstLine = fs.readFileSync(filePath, 'utf-8').split('\n')[0].trim();
@@ -145,9 +150,14 @@ export async function runAutoLogin(profileDir: string, signal: AbortSignal): Pro
     throw new BrowserLaunchError(`Chrome을 실행하지 못했습니다: ${(err as Error).message}`);
   }
 
+  let earlySpawnError: Error | undefined;
+  child.on('error', (err) => {
+    earlySpawnError = err;
+  });
+
   let port: number;
   try {
-    port = await waitForDevToolsActivePort(profileDir, CDP_READY_TIMEOUT_MS, signal);
+    port = await waitForDevToolsActivePort(profileDir, CDP_READY_TIMEOUT_MS, signal, () => earlySpawnError);
   } catch (err) {
     child.kill();
     throw err;
@@ -184,6 +194,7 @@ export async function runAutoLogin(profileDir: string, signal: AbortSignal): Pro
 
     throw new LoginCancelledError();
   } finally {
+    await browser.close().catch(() => undefined);
     child.kill();
   }
 }
