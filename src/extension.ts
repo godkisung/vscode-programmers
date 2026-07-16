@@ -8,6 +8,7 @@ import { buildSolutionFile, buildCasesFile } from './core/scaffold';
 import { runSampleTests } from './core/testRunner';
 import { renderProblemHtml } from './webview/render';
 import { ProblemData } from './core/types';
+import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let currentProblemDir: string | undefined;
@@ -18,6 +19,170 @@ function getOutputChannel(): vscode.OutputChannel {
     outputChannel = vscode.window.createOutputChannel('Programmers');
   }
   return outputChannel;
+}
+
+async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> {
+  const profileDir = path.join(context.globalStorageUri.fsPath, 'browser-profile');
+  fs.mkdirSync(profileDir, { recursive: true });
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 5 * 60 * 1000);
+
+  try {
+    const cookie = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Programmers 로그인 — 뜨는 브라우저 창에서 로그인해주세요...',
+        cancellable: true,
+      },
+      async (_progress, token) => {
+        token.onCancellationRequested(() => controller.abort());
+        return runAutoLogin(profileDir, controller.signal);
+      }
+    );
+    await setCookie(context.secrets, cookie);
+    vscode.window.showInformationMessage('Programmers 로그인에 성공했습니다.');
+    return true;
+  } catch (err) {
+    if (err instanceof LoginCancelledError) {
+      if (timedOut) {
+        vscode.window.showErrorMessage('로그인 시간이 초과되었습니다.');
+      }
+      return false;
+    }
+    if (err instanceof BrowserLaunchError) {
+      const choice = await vscode.window.showErrorMessage(
+        `자동 로그인을 사용할 수 없습니다: ${err.message} "Programmers: Set Session Cookie"로 수동 입력해주세요.`,
+        '프로파일 초기화 후 재시도'
+      );
+      if (choice === '프로파일 초기화 후 재시도') {
+        fs.rmSync(profileDir, { recursive: true, force: true });
+        return runLoginFlow(context);
+      }
+      return false;
+    }
+    vscode.window.showErrorMessage(`로그인 중 오류가 발생했습니다: ${(err as Error).message}`);
+    return false;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function checkConnectionOnce(
+  context: vscode.ExtensionContext,
+  allowLoginRetry: boolean
+): Promise<void> {
+  const cookie = await getCookie(context.secrets);
+  if (!cookie) {
+    if (!allowLoginRetry) {
+      vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
+      return;
+    }
+    const choice = await vscode.window.showErrorMessage(
+      '먼저 세션 쿠키를 설정하거나 로그인하세요.',
+      '로그인'
+    );
+    if (choice === '로그인' && (await runLoginFlow(context))) {
+      await checkConnectionOnce(context, false);
+    }
+    return;
+  }
+
+  try {
+    const ok = await checkSession(cookie);
+    if (ok) {
+      vscode.window.showInformationMessage('Programmers 연결 확인: 정상');
+      return;
+    }
+    if (!allowLoginRetry) {
+      vscode.window.showErrorMessage('Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.');
+      return;
+    }
+    const choice = await vscode.window.showErrorMessage(
+      'Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.',
+      '로그인'
+    );
+    if (choice === '로그인' && (await runLoginFlow(context))) {
+      await checkConnectionOnce(context, false);
+    }
+  } catch (err) {
+    vscode.window.showErrorMessage(`연결 확인 중 오류가 발생했습니다: ${(err as Error).message}`);
+  }
+}
+
+async function openProblemOnce(
+  context: vscode.ExtensionContext,
+  workspaceFolder: vscode.WorkspaceFolder,
+  id: string,
+  allowLoginRetry: boolean
+): Promise<void> {
+  const cookie = await getCookie(context.secrets);
+  if (!cookie) {
+    if (!allowLoginRetry) {
+      vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
+      return;
+    }
+    const choice = await vscode.window.showErrorMessage(
+      '먼저 세션 쿠키를 설정하거나 로그인하세요.',
+      '로그인'
+    );
+    if (choice === '로그인' && (await runLoginFlow(context))) {
+      await openProblemOnce(context, workspaceFolder, id, false);
+    }
+    return;
+  }
+
+  let problem: ProblemData;
+  try {
+    const html = await fetchProblemHtml(id, cookie);
+    problem = parseProblemHtml(html, id);
+  } catch (err) {
+    if (err instanceof AuthExpiredError) {
+      if (!allowLoginRetry) {
+        vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다. 브라우저에서 다시 복사해 설정해주세요.');
+        return;
+      }
+      const choice = await vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다.', '로그인');
+      if (choice === '로그인' && (await runLoginFlow(context))) {
+        await openProblemOnce(context, workspaceFolder, id, false);
+      }
+    } else {
+      vscode.window.showErrorMessage(`문제를 불러오지 못했습니다: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  const dir = path.join(workspaceFolder.uri.fsPath, '.programmers', id);
+  fs.mkdirSync(dir, { recursive: true });
+  const solutionPath = path.join(dir, 'solution.py');
+  const casesPath = path.join(dir, 'cases.json');
+  if (!fs.existsSync(solutionPath)) {
+    fs.writeFileSync(solutionPath, buildSolutionFile(problem));
+  }
+  fs.writeFileSync(casesPath, buildCasesFile(problem));
+  currentProblemDir = dir;
+
+  const doc = await vscode.workspace.openTextDocument(solutionPath);
+  await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+
+  if (!currentPanel) {
+    currentPanel = vscode.window.createWebviewPanel(
+      'programmersProblem',
+      problem.title,
+      vscode.ViewColumn.Two,
+      {}
+    );
+    currentPanel.onDidDispose(() => {
+      currentPanel = undefined;
+    });
+  }
+  currentPanel.title = problem.title;
+  currentPanel.webview.html = renderProblemHtml(problem);
+  currentPanel.reveal(vscode.ViewColumn.Two);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -33,22 +198,12 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Programmers 세션 쿠키를 저장했습니다.');
     }),
 
+    vscode.commands.registerCommand('programmers.login', async () => {
+      await runLoginFlow(context);
+    }),
+
     vscode.commands.registerCommand('programmers.checkConnection', async () => {
-      const cookie = await getCookie(context.secrets);
-      if (!cookie) {
-        vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
-        return;
-      }
-      try {
-        const ok = await checkSession(cookie);
-        if (ok) {
-          vscode.window.showInformationMessage('Programmers 연결 확인: 정상');
-        } else {
-          vscode.window.showErrorMessage('Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.');
-        }
-      } catch (err) {
-        vscode.window.showErrorMessage(`연결 확인 중 오류가 발생했습니다: ${(err as Error).message}`);
-      }
+      await checkConnectionOnce(context, true);
     }),
 
     vscode.commands.registerCommand('programmers.openProblem', async () => {
@@ -68,52 +223,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const cookie = await getCookie(context.secrets);
-      if (!cookie) {
-        vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
-        return;
-      }
-
-      let problem: ProblemData;
-      try {
-        const html = await fetchProblemHtml(id, cookie);
-        problem = parseProblemHtml(html, id);
-      } catch (err) {
-        if (err instanceof AuthExpiredError) {
-          vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다. 브라우저에서 다시 복사해 설정해주세요.');
-        } else {
-          vscode.window.showErrorMessage(`문제를 불러오지 못했습니다: ${(err as Error).message}`);
-        }
-        return;
-      }
-
-      const dir = path.join(workspaceFolder.uri.fsPath, '.programmers', id);
-      fs.mkdirSync(dir, { recursive: true });
-      const solutionPath = path.join(dir, 'solution.py');
-      const casesPath = path.join(dir, 'cases.json');
-      if (!fs.existsSync(solutionPath)) {
-        fs.writeFileSync(solutionPath, buildSolutionFile(problem));
-      }
-      fs.writeFileSync(casesPath, buildCasesFile(problem));
-      currentProblemDir = dir;
-
-      const doc = await vscode.workspace.openTextDocument(solutionPath);
-      await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
-
-      if (!currentPanel) {
-        currentPanel = vscode.window.createWebviewPanel(
-          'programmersProblem',
-          problem.title,
-          vscode.ViewColumn.Two,
-          {}
-        );
-        currentPanel.onDidDispose(() => {
-          currentPanel = undefined;
-        });
-      }
-      currentPanel.title = problem.title;
-      currentPanel.webview.html = renderProblemHtml(problem);
-      currentPanel.reveal(vscode.ViewColumn.Two);
+      await openProblemOnce(context, workspaceFolder, id, true);
     }),
 
     vscode.commands.registerCommand('programmers.runSampleTests', async () => {

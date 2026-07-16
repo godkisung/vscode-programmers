@@ -13,10 +13,26 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      { "command": "programmers.setSessionCookie", "title": "Programmers: Set Session Cookie" },
-      { "command": "programmers.checkConnection", "title": "Programmers: Check Connection" },
-      { "command": "programmers.openProblem", "title": "Programmers: Open Problem" },
-      { "command": "programmers.runSampleTests", "title": "Programmers: Run Sample Tests" }
+      {
+        "command": "programmers.setSessionCookie",
+        "title": "Programmers: Set Session Cookie"
+      },
+      {
+        "command": "programmers.login",
+        "title": "Programmers: Login (Auto)"
+      },
+      {
+        "command": "programmers.checkConnection",
+        "title": "Programmers: Check Connection"
+      },
+      {
+        "command": "programmers.openProblem",
+        "title": "Programmers: Open Problem"
+      },
+      {
+        "command": "programmers.runSampleTests",
+        "title": "Programmers: Run Sample Tests"
+      }
     ]
   },
   "scripts": {
@@ -36,6 +52,7 @@
   },
   "dependencies": {
     "cheerio": "^1.2.0",
+    "playwright-core": "^1.61.1",
     "sanitize-html": "^2.17.5"
   }
 }
