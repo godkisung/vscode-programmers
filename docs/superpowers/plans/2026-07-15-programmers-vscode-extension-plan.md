@@ -6,7 +6,7 @@
 
 **Architecture:** A TypeScript VS Code extension with a strict split between pure, unit-testable "core" logic (HTML/case parsing, file scaffolding, HTTP header building, Python-harness invocation, webview HTML rendering) and a thin `extension.ts` glue layer that wires core modules to VS Code commands, `SecretStorage`, and the filesystem. Local test execution shells out to a small static Python script (`resources/runner.py`) that imports the user's `solution.py` and calls `solution(*args)` per example case.
 
-**Tech Stack:** TypeScript, VS Code Extension API, Jest + ts-jest, cheerio (HTML parsing), sanitize-html (webview sanitization), Python 3 (local test harness, invoked via `child_process.spawnSync`).
+**Tech Stack:** TypeScript, VS Code Extension API, Jest + ts-jest, cheerio (HTML parsing), sanitize-html (webview sanitization), Python 3 (local test harness, invoked via `child_process.spawnSync`), playwright-core (automated browser login, Task 10).
 
 ## Global Constraints
 
@@ -16,6 +16,7 @@
 - No custom user-added test cases in this phase — only the problem's own example cases are run locally
 - All requests to Programmers must send a consistent `User-Agent` header alongside the cookie
 - The real HTML/markup structure of school.programmers.co.kr has **not** been verified against the live site during planning (no authenticated access available). Parser selectors are best-effort placeholders and MUST be validated/corrected against a real page in Task 9.
+- Automatic login (Task 10, Playwright-based) must remain a fallback-preserving addition — the existing manual "Set Session Cookie" path must keep working unchanged (see `docs/superpowers/specs/2026-07-16-auto-login-design.md`)
 
 ---
 
@@ -1292,4 +1293,501 @@ Expected: PASS
 ```bash
 git add src/core/parser.ts test/fixtures/sample-problem.html test/core/parser.test.ts
 git commit -m "fix: correct parser selectors against real Programmers markup"
+```
+
+---
+
+## Task 10: Automatic login via Playwright
+
+**Spec:** `docs/superpowers/specs/2026-07-16-auto-login-design.md`
+
+**Files:**
+- Create: `src/core/autoLogin.ts`
+- Test: `test/core/autoLogin.test.ts`
+- Modify: `src/extension.ts` (add `programmers.login` command; wrap `checkConnection`/`openProblem` with one-shot login retry)
+- Modify: `package.json` (add `playwright-core` dependency, add `programmers.login` command contribution)
+
+**Interfaces:**
+- Consumes: `checkSession` from `src/core/fetchProblem.ts` (Task 6); `getCookie`/`setCookie` from `src/secretsStore.ts` (Task 8)
+- Produces (in `autoLogin.ts`): `filterAndFormatCookies(cookies: CookiePair[], targetHost?: string): string`, `runAutoLogin(profileDir: string, signal: AbortSignal): Promise<string>`, `class BrowserLaunchError extends Error`, `class LoginCancelledError extends Error`, `interface CookiePair { name: string; value: string; domain: string }`
+
+**Only `filterAndFormatCookies` and the two error classes are unit-tested.** `runAutoLogin` drives a real Chrome browser and cannot run under Jest — it is verified manually in Step 9, the same way Task 8/9 verify VS Code-API/live-site behavior.
+
+- [ ] **Step 1: Install `playwright-core`**
+
+Run: `npm install playwright-core`
+Expected: adds `playwright-core` to `dependencies` in `package.json`
+
+- [ ] **Step 2: Write the failing test `test/core/autoLogin.test.ts`**
+
+```ts
+import { filterAndFormatCookies, BrowserLaunchError, LoginCancelledError } from '../../src/core/autoLogin';
+
+describe('filterAndFormatCookies', () => {
+  test('keeps a cookie whose domain exactly matches the target host', () => {
+    const result = filterAndFormatCookies(
+      [{ name: '_fss_session', value: 'abc123', domain: 'school.programmers.co.kr' }],
+      'school.programmers.co.kr'
+    );
+    expect(result).toBe('_fss_session=abc123');
+  });
+
+  test('keeps a cookie set on the parent domain with a leading dot', () => {
+    const result = filterAndFormatCookies(
+      [{ name: 'shared_id', value: 'xyz', domain: '.programmers.co.kr' }],
+      'school.programmers.co.kr'
+    );
+    expect(result).toBe('shared_id=xyz');
+  });
+
+  test('drops cookies for unrelated domains', () => {
+    const result = filterAndFormatCookies(
+      [
+        { name: '_fss_session', value: 'abc123', domain: 'school.programmers.co.kr' },
+        { name: '_ga', value: 'tracking', domain: '.google-analytics.com' },
+      ],
+      'school.programmers.co.kr'
+    );
+    expect(result).toBe('_fss_session=abc123');
+  });
+
+  test('joins multiple matching cookies with "; "', () => {
+    const result = filterAndFormatCookies(
+      [
+        { name: 'a', value: '1', domain: 'school.programmers.co.kr' },
+        { name: 'b', value: '2', domain: '.programmers.co.kr' },
+      ],
+      'school.programmers.co.kr'
+    );
+    expect(result).toBe('a=1; b=2');
+  });
+
+  test('returns an empty string when nothing matches', () => {
+    const result = filterAndFormatCookies(
+      [{ name: '_ga', value: 'tracking', domain: '.google-analytics.com' }],
+      'school.programmers.co.kr'
+    );
+    expect(result).toBe('');
+  });
+});
+
+describe('error classes', () => {
+  test('BrowserLaunchError carries a message and name', () => {
+    const err = new BrowserLaunchError('Chrome을 찾을 수 없습니다');
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('BrowserLaunchError');
+    expect(err.message).toBe('Chrome을 찾을 수 없습니다');
+  });
+
+  test('LoginCancelledError has a fixed message', () => {
+    const err = new LoginCancelledError();
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('LoginCancelledError');
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `npx jest test/core/autoLogin.test.ts`
+Expected: FAIL with "Cannot find module '../../src/core/autoLogin'"
+
+- [ ] **Step 4: Write `src/core/autoLogin.ts`**
+
+```ts
+import { chromium, BrowserContext } from 'playwright-core';
+import { checkSession } from './fetchProblem';
+
+export class BrowserLaunchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BrowserLaunchError';
+  }
+}
+
+export class LoginCancelledError extends Error {
+  constructor() {
+    super('로그인이 취소되었습니다.');
+    this.name = 'LoginCancelledError';
+  }
+}
+
+export interface CookiePair {
+  name: string;
+  value: string;
+  domain: string;
+}
+
+const TARGET_HOST = 'school.programmers.co.kr';
+const POLL_INTERVAL_MS = 2500;
+const REQUIRED_CONSECUTIVE_SUCCESSES = 2;
+
+export function filterAndFormatCookies(cookies: CookiePair[], targetHost: string = TARGET_HOST): string {
+  return cookies
+    .filter((c) => domainMatches(c.domain, targetHost))
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+}
+
+function domainMatches(cookieDomain: string, targetHost: string): boolean {
+  const normalized = cookieDomain.replace(/^\./, '');
+  return normalized === targetHost || targetHost.endsWith(`.${normalized}`);
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
+
+export async function runAutoLogin(profileDir: string, signal: AbortSignal): Promise<string> {
+  let context: BrowserContext;
+  try {
+    context = await chromium.launchPersistentContext(profileDir, {
+      channel: 'chrome',
+      headless: false,
+    });
+  } catch (err) {
+    throw new BrowserLaunchError(`Chrome을 실행하지 못했습니다: ${(err as Error).message}`);
+  }
+
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto(`https://${TARGET_HOST}`);
+
+    let consecutiveSuccesses = 0;
+    while (!signal.aborted) {
+      const cookies = await context.cookies();
+      const cookieString = filterAndFormatCookies(cookies);
+      const valid = cookieString.length > 0 && (await checkSession(cookieString));
+
+      if (valid) {
+        consecutiveSuccesses++;
+        if (consecutiveSuccesses >= REQUIRED_CONSECUTIVE_SUCCESSES) {
+          return cookieString;
+        }
+      } else {
+        consecutiveSuccesses = 0;
+      }
+
+      await sleep(POLL_INTERVAL_MS, signal);
+    }
+
+    throw new LoginCancelledError();
+  } finally {
+    await context.close();
+  }
+}
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `npx jest test/core/autoLogin.test.ts`
+Expected: PASS (7 tests)
+
+- [ ] **Step 6: Update `package.json` `contributes.commands`**
+
+Add to the `commands` array (after `programmers.setSessionCookie`):
+
+```json
+{ "command": "programmers.login", "title": "Programmers: Login (Auto)" }
+```
+
+- [ ] **Step 7: Replace `src/extension.ts`**
+
+```ts
+import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
+import { getCookie, setCookie } from './secretsStore';
+import { fetchProblemHtml, checkSession, AuthExpiredError } from './core/fetchProblem';
+import { parseProblemHtml } from './core/parser';
+import { buildSolutionFile, buildCasesFile } from './core/scaffold';
+import { runSampleTests } from './core/testRunner';
+import { renderProblemHtml } from './webview/render';
+import { ProblemData } from './core/types';
+import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
+
+let currentPanel: vscode.WebviewPanel | undefined;
+let currentProblemDir: string | undefined;
+let outputChannel: vscode.OutputChannel | undefined;
+
+function getOutputChannel(): vscode.OutputChannel {
+  if (!outputChannel) {
+    outputChannel = vscode.window.createOutputChannel('Programmers');
+  }
+  return outputChannel;
+}
+
+async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> {
+  const profileDir = path.join(context.globalStorageUri.fsPath, 'browser-profile');
+  fs.mkdirSync(profileDir, { recursive: true });
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 5 * 60 * 1000);
+
+  try {
+    const cookie = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Programmers 로그인 — 뜨는 브라우저 창에서 로그인해주세요...',
+        cancellable: true,
+      },
+      async (_progress, token) => {
+        token.onCancellationRequested(() => controller.abort());
+        return runAutoLogin(profileDir, controller.signal);
+      }
+    );
+    await setCookie(context.secrets, cookie);
+    vscode.window.showInformationMessage('Programmers 로그인에 성공했습니다.');
+    return true;
+  } catch (err) {
+    if (err instanceof LoginCancelledError) {
+      if (timedOut) {
+        vscode.window.showErrorMessage('로그인 시간이 초과되었습니다.');
+      }
+      return false;
+    }
+    if (err instanceof BrowserLaunchError) {
+      const choice = await vscode.window.showErrorMessage(
+        `자동 로그인을 사용할 수 없습니다: ${err.message} "Programmers: Set Session Cookie"로 수동 입력해주세요.`,
+        '프로파일 초기화 후 재시도'
+      );
+      if (choice === '프로파일 초기화 후 재시도') {
+        fs.rmSync(profileDir, { recursive: true, force: true });
+        return runLoginFlow(context);
+      }
+      return false;
+    }
+    vscode.window.showErrorMessage(`로그인 중 오류가 발생했습니다: ${(err as Error).message}`);
+    return false;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function checkConnectionOnce(
+  context: vscode.ExtensionContext,
+  allowLoginRetry: boolean
+): Promise<void> {
+  const cookie = await getCookie(context.secrets);
+  if (!cookie) {
+    if (!allowLoginRetry) {
+      vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
+      return;
+    }
+    const choice = await vscode.window.showErrorMessage(
+      '먼저 세션 쿠키를 설정하거나 로그인하세요.',
+      '로그인'
+    );
+    if (choice === '로그인' && (await runLoginFlow(context))) {
+      await checkConnectionOnce(context, false);
+    }
+    return;
+  }
+
+  try {
+    const ok = await checkSession(cookie);
+    if (ok) {
+      vscode.window.showInformationMessage('Programmers 연결 확인: 정상');
+      return;
+    }
+    if (!allowLoginRetry) {
+      vscode.window.showErrorMessage('Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.');
+      return;
+    }
+    const choice = await vscode.window.showErrorMessage(
+      'Programmers 연결 확인 실패: 쿠키가 만료되었을 수 있습니다.',
+      '로그인'
+    );
+    if (choice === '로그인' && (await runLoginFlow(context))) {
+      await checkConnectionOnce(context, false);
+    }
+  } catch (err) {
+    vscode.window.showErrorMessage(`연결 확인 중 오류가 발생했습니다: ${(err as Error).message}`);
+  }
+}
+
+async function openProblemOnce(
+  context: vscode.ExtensionContext,
+  workspaceFolder: vscode.WorkspaceFolder,
+  id: string,
+  allowLoginRetry: boolean
+): Promise<void> {
+  const cookie = await getCookie(context.secrets);
+  if (!cookie) {
+    if (!allowLoginRetry) {
+      vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
+      return;
+    }
+    const choice = await vscode.window.showErrorMessage(
+      '먼저 세션 쿠키를 설정하거나 로그인하세요.',
+      '로그인'
+    );
+    if (choice === '로그인' && (await runLoginFlow(context))) {
+      await openProblemOnce(context, workspaceFolder, id, false);
+    }
+    return;
+  }
+
+  let problem: ProblemData;
+  try {
+    const html = await fetchProblemHtml(id, cookie);
+    problem = parseProblemHtml(html, id);
+  } catch (err) {
+    if (err instanceof AuthExpiredError) {
+      if (!allowLoginRetry) {
+        vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다. 브라우저에서 다시 복사해 설정해주세요.');
+        return;
+      }
+      const choice = await vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다.', '로그인');
+      if (choice === '로그인' && (await runLoginFlow(context))) {
+        await openProblemOnce(context, workspaceFolder, id, false);
+      }
+    } else {
+      vscode.window.showErrorMessage(`문제를 불러오지 못했습니다: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  const dir = path.join(workspaceFolder.uri.fsPath, '.programmers', id);
+  fs.mkdirSync(dir, { recursive: true });
+  const solutionPath = path.join(dir, 'solution.py');
+  const casesPath = path.join(dir, 'cases.json');
+  if (!fs.existsSync(solutionPath)) {
+    fs.writeFileSync(solutionPath, buildSolutionFile(problem));
+  }
+  fs.writeFileSync(casesPath, buildCasesFile(problem));
+  currentProblemDir = dir;
+
+  const doc = await vscode.workspace.openTextDocument(solutionPath);
+  await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+
+  if (!currentPanel) {
+    currentPanel = vscode.window.createWebviewPanel(
+      'programmersProblem',
+      problem.title,
+      vscode.ViewColumn.Two,
+      {}
+    );
+    currentPanel.onDidDispose(() => {
+      currentPanel = undefined;
+    });
+  }
+  currentPanel.title = problem.title;
+  currentPanel.webview.html = renderProblemHtml(problem);
+  currentPanel.reveal(vscode.ViewColumn.Two);
+}
+
+export function activate(context: vscode.ExtensionContext) {
+  context.subscriptions.push(
+    vscode.commands.registerCommand('programmers.setSessionCookie', async () => {
+      const cookie = await vscode.window.showInputBox({
+        prompt: '브라우저 개발자도구에서 복사한 Cookie 헤더 값을 붙여넣으세요',
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (!cookie) return;
+      await setCookie(context.secrets, cookie);
+      vscode.window.showInformationMessage('Programmers 세션 쿠키를 저장했습니다.');
+    }),
+
+    vscode.commands.registerCommand('programmers.login', async () => {
+      await runLoginFlow(context);
+    }),
+
+    vscode.commands.registerCommand('programmers.checkConnection', async () => {
+      await checkConnectionOnce(context, true);
+    }),
+
+    vscode.commands.registerCommand('programmers.openProblem', async () => {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
+        vscode.window.showErrorMessage('먼저 워크스페이스 폴더를 여세요.');
+        return;
+      }
+
+      const rawInput = await vscode.window.showInputBox({
+        prompt: 'Programmers 문제 번호 또는 URL을 입력하세요',
+      });
+      if (!rawInput) return;
+      const id = extractProblemId(rawInput);
+      if (!/^\d+$/.test(id)) {
+        vscode.window.showErrorMessage('문제 번호를 인식하지 못했습니다. 숫자 또는 문제 페이지 URL을 입력하세요.');
+        return;
+      }
+
+      await openProblemOnce(context, workspaceFolder, id, true);
+    }),
+
+    vscode.commands.registerCommand('programmers.runSampleTests', async () => {
+      if (!currentProblemDir) {
+        vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
+        return;
+      }
+      const solutionPath = path.join(currentProblemDir, 'solution.py');
+      const casesPath = path.join(currentProblemDir, 'cases.json');
+
+      try {
+        const results = runSampleTests(solutionPath, casesPath);
+        const passed = results.filter((r) => r.pass).length;
+        const channel = getOutputChannel();
+        channel.clear();
+        channel.appendLine(`${passed}/${results.length} 통과`);
+        for (const r of results) {
+          if (r.pass) {
+            channel.appendLine(`  [PASS] case ${r.index}`);
+          } else if (r.error) {
+            channel.appendLine(`  [FAIL] case ${r.index}: ${r.error}`);
+          } else {
+            channel.appendLine(
+              `  [FAIL] case ${r.index}: expected=${JSON.stringify(r.expected)} actual=${JSON.stringify(r.actual)}`
+            );
+          }
+        }
+        channel.show();
+      } catch (err) {
+        vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
+      }
+    })
+  );
+}
+
+export function deactivate() {}
+
+function extractProblemId(input: string): string {
+  const match = input.match(/lessons\/(\d+)/);
+  return match ? match[1] : input.trim();
+}
+```
+
+- [ ] **Step 8: Verify compilation**
+
+Run: `npm run compile`
+Expected: exits 0
+
+- [ ] **Step 9: Manual verification in the Extension Development Host**
+
+1. Press `F5` to launch the Extension Development Host, open any workspace folder
+2. Run "Programmers: Login (Auto)" → expect a visible Chrome window to open at `school.programmers.co.kr`; log in normally in that window
+3. Expect the login notification to auto-dismiss and show "로그인에 성공했습니다" within a few seconds of completing login, without any manual copy/paste
+4. Run "Programmers: Check Connection" → expect "연결 확인: 정상" (confirms the stored cookie from step 2 works)
+5. Run "Programmers: Login (Auto)" again → expect it to succeed noticeably faster (persistent profile already has a valid session), confirming `browser-profile/` reuse works
+6. During a fresh login attempt, click the "취소" (Cancel) button on the progress notification → expect the Chrome window to close and no error message (or, if triggered near the 5-minute mark instead, "로그인 시간이 초과되었습니다.")
+7. Delete `.../globalStorage/<extension-id>/browser-profile` manually to simulate a corrupted profile, or otherwise force a launch failure, and confirm the "프로파일 초기화 후 재시도" flow re-launches successfully
+8. Clear the stored cookie (or run in an environment without Chrome installed, e.g. a container) and run "Programmers: Check Connection" → expect the error message's "로그인" button to trigger the login flow, then automatically re-run the connection check exactly once after a successful login
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/core/autoLogin.ts test/core/autoLogin.test.ts src/extension.ts package.json package-lock.json
+git commit -m "feat: add Playwright-based automatic login with manual-entry fallback"
 ```
