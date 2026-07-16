@@ -1,4 +1,10 @@
-import { filterAndFormatCookies, BrowserLaunchError, LoginCancelledError, sleep } from '../../src/core/autoLogin';
+import {
+  filterAndFormatCookies,
+  BrowserLaunchError,
+  LoginCancelledError,
+  sleep,
+  resolveChromeExecutable,
+} from '../../src/core/autoLogin';
 
 describe('filterAndFormatCookies', () => {
   test('keeps a cookie whose domain exactly matches the target host', () => {
@@ -85,5 +91,48 @@ describe('sleep', () => {
     const start = Date.now();
     await sleep(50, controller.signal);
     expect(Date.now() - start).toBeGreaterThanOrEqual(45);
+  });
+});
+
+describe('resolveChromeExecutable', () => {
+  test('returns the first Linux candidate that exists', () => {
+    const exists = (p: string) => p === '/opt/google/chrome/chrome';
+    expect(resolveChromeExecutable('linux', exists, {})).toBe('/opt/google/chrome/chrome');
+  });
+
+  test('falls through to a later Linux candidate when earlier ones are missing', () => {
+    const exists = (p: string) => p === '/usr/bin/google-chrome-stable';
+    expect(resolveChromeExecutable('linux', exists, {})).toBe('/usr/bin/google-chrome-stable');
+  });
+
+  test('returns null on Linux when no candidate exists', () => {
+    expect(resolveChromeExecutable('linux', () => false, {})).toBeNull();
+  });
+
+  test('returns the macOS app bundle path when it exists', () => {
+    const macPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const exists = (p: string) => p === macPath;
+    expect(resolveChromeExecutable('darwin', exists, {})).toBe(macPath);
+  });
+
+  test('returns null on macOS when the app bundle is missing', () => {
+    expect(resolveChromeExecutable('darwin', () => false, {})).toBeNull();
+  });
+
+  test('builds the Windows path from the ProgramFiles env var, using backslash separators regardless of host OS', () => {
+    const expected = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    const exists = (p: string) => p === expected;
+    expect(resolveChromeExecutable('win32', exists, { ProgramFiles: 'C:\\Program Files' })).toBe(expected);
+  });
+
+  test('falls back to the x86 ProgramFiles candidate on Windows', () => {
+    const expected = 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe';
+    const exists = (p: string) => p === expected;
+    expect(
+      resolveChromeExecutable('win32', exists, {
+        ProgramFiles: 'C:\\Program Files',
+        'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      })
+    ).toBe(expected);
   });
 });
