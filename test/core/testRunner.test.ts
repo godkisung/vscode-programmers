@@ -11,8 +11,8 @@ describe('runSampleTests', () => {
     );
 
     expect(results).toEqual([
-      { index: 0, pass: true, actual: 'leo', expected: 'leo' },
-      { index: 1, pass: true, actual: 'a', expected: 'a' },
+      { index: 0, pass: true, actual: 'leo', expected: 'leo', timeMs: expect.any(Number) },
+      { index: 1, pass: true, actual: 'a', expected: 'a', timeMs: expect.any(Number) },
     ]);
   });
 
@@ -33,8 +33,8 @@ describe('runSampleTests', () => {
     );
 
     expect(results).toEqual([
-      { index: 0, pass: true, actual: 'leo', expected: 'leo' },
-      { index: 1, pass: true, actual: 'a', expected: 'a' },
+      { index: 0, pass: true, actual: 'leo', expected: 'leo', timeMs: expect.any(Number) },
+      { index: 1, pass: true, actual: 'a', expected: 'a', timeMs: expect.any(Number) },
     ]);
   });
 
@@ -56,6 +56,26 @@ describe('runSampleTests', () => {
     );
 
     expect(debugOutput).toBe('');
+  });
+
+  test('reports timeMs as a non-negative number for every case, including failures', () => {
+    const passing = runSampleTests(
+      path.join(fixturesDir, 'sample-solution.py'),
+      path.join(fixturesDir, 'sample-cases.json')
+    );
+    for (const r of passing.results) {
+      expect(typeof r.timeMs).toBe('number');
+      expect(r.timeMs as number).toBeGreaterThanOrEqual(0);
+    }
+
+    const failing = runSampleTests(
+      path.join(fixturesDir, 'broken-solution.py'),
+      path.join(fixturesDir, 'sample-cases.json')
+    );
+    for (const r of failing.results) {
+      expect(typeof r.timeMs).toBe('number');
+      expect(r.timeMs as number).toBeGreaterThanOrEqual(0);
+    }
   });
 
   test('kills the process and reports a clear error when the solution times out', () => {

@@ -25,6 +25,7 @@ export interface RunResult {
   actual?: unknown;
   expected?: unknown;
   error?: string;
+  timeMs?: number;
 }
 
 export interface SampleTestRun {

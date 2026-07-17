@@ -247,15 +247,17 @@ export function activate(context: vscode.ExtensionContext) {
         const passed = results.filter((r) => r.pass).length;
         const channel = getOutputChannel();
         channel.clear();
+        channel.appendLine('(참고: 로컬 측정치이며 실제 채점 서버 성능과 다를 수 있습니다)');
         channel.appendLine(`${passed}/${results.length} 통과`);
         for (const r of results) {
+          const timing = r.timeMs !== undefined ? ` (${r.timeMs}ms)` : '';
           if (r.pass) {
-            channel.appendLine(`  [PASS] case ${r.index}`);
+            channel.appendLine(`  [PASS] case ${r.index}${timing}`);
           } else if (r.error) {
-            channel.appendLine(`  [FAIL] case ${r.index}: ${r.error}`);
+            channel.appendLine(`  [FAIL] case ${r.index}: ${r.error}${timing}`);
           } else {
             channel.appendLine(
-              `  [FAIL] case ${r.index}: expected=${JSON.stringify(r.expected)} actual=${JSON.stringify(r.actual)}`
+              `  [FAIL] case ${r.index}: expected=${JSON.stringify(r.expected)} actual=${JSON.stringify(r.actual)}${timing}`
             );
           }
         }
