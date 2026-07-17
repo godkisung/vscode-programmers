@@ -14,7 +14,10 @@ import { getRecentProblems, addRecentProblem } from './recentProblems';
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let currentProblemDir: string | undefined;
+let currentProblemUrl: string | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
+
+const CURRENT_PROBLEM_URL_KEY = 'programmers.currentProblemUrl';
 
 function getOutputChannel(): vscode.OutputChannel {
   if (!outputChannel) {
@@ -175,6 +178,8 @@ async function openProblemOnce(
   }
   fs.writeFileSync(casesPath, buildCasesFile(problem));
   currentProblemDir = dir;
+  currentProblemUrl = `https://school.programmers.co.kr/learn/courses/30/lessons/${problem.id}`;
+  await context.workspaceState.update(CURRENT_PROBLEM_URL_KEY, currentProblemUrl);
   await addRecentProblem(context.globalState, { id: problem.id, title: problem.title });
 
   const doc = await vscode.workspace.openTextDocument(solutionPath);
@@ -303,6 +308,42 @@ export function activate(context: vscode.ExtensionContext) {
         channel.show();
       } catch (err) {
         vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('programmers.copySolutionForSubmit', async () => {
+      if (!currentProblemDir) {
+        const savedUrl = context.workspaceState.get<string>(CURRENT_PROBLEM_URL_KEY);
+        if (savedUrl) {
+          const choice = await vscode.window.showErrorMessage(
+            '현재 열려 있는 문제를 찾을 수 없습니다 (창이 재시작되었을 수 있습니다). "Programmers: Open Problem"으로 문제를 다시 여세요.',
+            '웹사이트에서 열기'
+          );
+          if (choice === '웹사이트에서 열기') {
+            await vscode.env.openExternal(vscode.Uri.parse(savedUrl));
+          }
+        } else {
+          vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
+        }
+        return;
+      }
+
+      const solutionPath = path.join(currentProblemDir, 'solution.py');
+      let code: string;
+      try {
+        code = fs.readFileSync(solutionPath, 'utf-8');
+      } catch (err) {
+        vscode.window.showErrorMessage(`코드를 읽지 못했습니다: ${(err as Error).message}`);
+        return;
+      }
+
+      await vscode.env.clipboard.writeText(code);
+      const choice = await vscode.window.showInformationMessage(
+        '제출용 코드를 클립보드에 복사했습니다.',
+        '웹사이트에서 열기'
+      );
+      if (choice === '웹사이트에서 열기' && currentProblemUrl) {
+        await vscode.env.openExternal(vscode.Uri.parse(currentProblemUrl));
       }
     })
   );

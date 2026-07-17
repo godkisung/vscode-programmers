@@ -32,6 +32,10 @@
       {
         "command": "programmers.runSampleTests",
         "title": "Programmers: Run Sample Tests"
+      },
+      {
+        "command": "programmers.copySolutionForSubmit",
+        "title": "Programmers: Copy Solution for Submission"
       }
     ]
   },
