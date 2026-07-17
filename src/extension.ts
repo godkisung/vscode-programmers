@@ -9,6 +9,8 @@ import { runSampleTests } from './core/testRunner';
 import { renderProblemHtml } from './webview/render';
 import { ProblemData } from './core/types';
 import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
+import { detectProblemIdCandidate } from './core/clipboardCandidate';
+import { getRecentProblems, addRecentProblem } from './recentProblems';
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let currentProblemDir: string | undefined;
@@ -173,6 +175,7 @@ async function openProblemOnce(
   }
   fs.writeFileSync(casesPath, buildCasesFile(problem));
   currentProblemDir = dir;
+  await addRecentProblem(context.globalState, { id: problem.id, title: problem.title });
 
   const doc = await vscode.workspace.openTextDocument(solutionPath);
   await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
@@ -221,14 +224,45 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const rawInput = await vscode.window.showInputBox({
-        prompt: 'Programmers 문제 번호 또는 URL을 입력하세요',
+      let clipboardCandidate: string | undefined;
+      try {
+        clipboardCandidate = detectProblemIdCandidate(await vscode.env.clipboard.readText());
+      } catch {
+        clipboardCandidate = undefined;
+      }
+
+      const recent = getRecentProblems(context.globalState);
+
+      type ProblemQuickPickItem = vscode.QuickPickItem & { id?: string; manualEntry?: boolean };
+      const items: ProblemQuickPickItem[] = [];
+
+      if (clipboardCandidate && !recent.some((p) => p.id === clipboardCandidate)) {
+        items.push({ label: `📋 클립보드에서 감지됨: ${clipboardCandidate}`, id: clipboardCandidate });
+      }
+      for (const p of recent) {
+        items.push({ label: `${p.id} — ${p.title}`, id: p.id });
+      }
+      items.push({ label: '✏️ 직접 입력...', manualEntry: true });
+
+      const picked = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Programmers 문제를 선택하거나 직접 입력하세요',
       });
-      if (!rawInput) return;
-      const id = extractProblemId(rawInput);
-      if (!/^\d+$/.test(id)) {
-        vscode.window.showErrorMessage('문제 번호를 인식하지 못했습니다. 숫자 또는 문제 페이지 URL을 입력하세요.');
-        return;
+      if (!picked) return;
+
+      let id: string;
+      if (picked.manualEntry) {
+        const rawInput = await vscode.window.showInputBox({
+          prompt: 'Programmers 문제 번호 또는 URL을 입력하세요',
+          value: clipboardCandidate,
+        });
+        if (!rawInput) return;
+        id = extractProblemId(rawInput);
+        if (!/^\d+$/.test(id)) {
+          vscode.window.showErrorMessage('문제 번호를 인식하지 못했습니다. 숫자 또는 문제 페이지 URL을 입력하세요.');
+          return;
+        }
+      } else {
+        id = picked.id as string;
       }
 
       await openProblemOnce(context, workspaceFolder, id, true);
