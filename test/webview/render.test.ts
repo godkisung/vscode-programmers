@@ -56,4 +56,19 @@ describe('renderProblemHtml', () => {
     });
     expect(html).toContain('rel="noopener noreferrer"');
   });
+
+  test('includes a Content-Security-Policy meta tag restricting scripts and images', () => {
+    const html = renderProblemHtml(problem);
+    expect(html).toContain('Content-Security-Policy');
+    expect(html).toContain("default-src 'none'");
+    expect(html).toContain('img-src https://school.programmers.co.kr https:');
+    expect(html).toContain("style-src 'unsafe-inline'");
+  });
+
+  test('includes a style block themed with VS Code CSS variables', () => {
+    const html = renderProblemHtml(problem);
+    expect(html).toContain('<style>');
+    expect(html).toContain('var(--vscode-editor-background)');
+    expect(html).toContain('var(--vscode-editor-foreground)');
+  });
 });
