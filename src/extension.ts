@@ -150,55 +150,60 @@ async function openProblemOnce(
     return;
   }
 
-  let problem: ProblemData;
-  try {
-    const html = await fetchProblemHtml(id, cookie);
-    problem = parseProblemHtml(html, id);
-  } catch (err) {
-    if (err instanceof AuthExpiredError) {
-      if (!allowLoginRetry) {
-        vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다. 브라우저에서 다시 복사해 설정해주세요.');
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: '문제를 불러오는 중...' },
+    async () => {
+      let problem: ProblemData;
+      try {
+        const html = await fetchProblemHtml(id, cookie);
+        problem = parseProblemHtml(html, id);
+      } catch (err) {
+        if (err instanceof AuthExpiredError) {
+          if (!allowLoginRetry) {
+            vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다. 브라우저에서 다시 복사해 설정해주세요.');
+            return;
+          }
+          await offerLoginAndRetry(context, '쿠키가 만료된 것 같습니다.', () =>
+            openProblemOnce(context, workspaceFolder, id, false)
+          );
+        } else {
+          vscode.window.showErrorMessage(`문제를 불러오지 못했습니다: ${(err as Error).message}`);
+        }
         return;
       }
-      await offerLoginAndRetry(context, '쿠키가 만료된 것 같습니다.', () =>
-        openProblemOnce(context, workspaceFolder, id, false)
-      );
-    } else {
-      vscode.window.showErrorMessage(`문제를 불러오지 못했습니다: ${(err as Error).message}`);
+
+      const dir = path.join(workspaceFolder.uri.fsPath, '.programmers', id);
+      fs.mkdirSync(dir, { recursive: true });
+      const solutionPath = path.join(dir, 'solution.py');
+      const casesPath = path.join(dir, 'cases.json');
+      if (!fs.existsSync(solutionPath)) {
+        fs.writeFileSync(solutionPath, buildSolutionFile(problem));
+      }
+      fs.writeFileSync(casesPath, buildCasesFile(problem));
+      currentProblemDir = dir;
+      currentProblemUrl = `https://school.programmers.co.kr/learn/courses/30/lessons/${problem.id}`;
+      await context.workspaceState.update(CURRENT_PROBLEM_URL_KEY, currentProblemUrl);
+      await addRecentProblem(context.globalState, { id: problem.id, title: problem.title });
+
+      const doc = await vscode.workspace.openTextDocument(solutionPath);
+      await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+
+      if (!currentPanel) {
+        currentPanel = vscode.window.createWebviewPanel(
+          'programmersProblem',
+          problem.title,
+          vscode.ViewColumn.Two,
+          {}
+        );
+        currentPanel.onDidDispose(() => {
+          currentPanel = undefined;
+        });
+      }
+      currentPanel.title = problem.title;
+      currentPanel.webview.html = renderProblemHtml(problem);
+      currentPanel.reveal(vscode.ViewColumn.Two);
     }
-    return;
-  }
-
-  const dir = path.join(workspaceFolder.uri.fsPath, '.programmers', id);
-  fs.mkdirSync(dir, { recursive: true });
-  const solutionPath = path.join(dir, 'solution.py');
-  const casesPath = path.join(dir, 'cases.json');
-  if (!fs.existsSync(solutionPath)) {
-    fs.writeFileSync(solutionPath, buildSolutionFile(problem));
-  }
-  fs.writeFileSync(casesPath, buildCasesFile(problem));
-  currentProblemDir = dir;
-  currentProblemUrl = `https://school.programmers.co.kr/learn/courses/30/lessons/${problem.id}`;
-  await context.workspaceState.update(CURRENT_PROBLEM_URL_KEY, currentProblemUrl);
-  await addRecentProblem(context.globalState, { id: problem.id, title: problem.title });
-
-  const doc = await vscode.workspace.openTextDocument(solutionPath);
-  await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
-
-  if (!currentPanel) {
-    currentPanel = vscode.window.createWebviewPanel(
-      'programmersProblem',
-      problem.title,
-      vscode.ViewColumn.Two,
-      {}
-    );
-    currentPanel.onDidDispose(() => {
-      currentPanel = undefined;
-    });
-  }
-  currentPanel.title = problem.title;
-  currentPanel.webview.html = renderProblemHtml(problem);
-  currentPanel.reveal(vscode.ViewColumn.Two);
+  );
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -242,15 +247,20 @@ export function activate(context: vscode.ExtensionContext) {
       const items: ProblemQuickPickItem[] = [];
 
       if (clipboardCandidate && !recent.some((p) => p.id === clipboardCandidate)) {
-        items.push({ label: `📋 클립보드에서 감지됨: ${clipboardCandidate}`, id: clipboardCandidate });
+        items.push({
+          label: '$(clippy) 클립보드에서 감지됨',
+          description: clipboardCandidate,
+          id: clipboardCandidate,
+        });
       }
       for (const p of recent) {
-        items.push({ label: `${p.id} — ${p.title}`, id: p.id });
+        items.push({ label: `$(history) ${p.title}`, description: p.id, id: p.id });
       }
-      items.push({ label: '✏️ 직접 입력...', manualEntry: true });
+      items.push({ label: '$(edit) 직접 입력...', manualEntry: true });
 
       const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: 'Programmers 문제를 선택하거나 직접 입력하세요',
+        placeHolder: '클립보드 감지, 최근 목록에서 선택하거나 직접 입력하세요',
+        matchOnDescription: true,
       });
       if (!picked) return;
 
