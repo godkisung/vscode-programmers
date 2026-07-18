@@ -11,13 +11,11 @@ import { ProblemData } from './core/types';
 import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
 import { detectProblemIdCandidate } from './core/clipboardCandidate';
 import { getRecentProblems, addRecentProblem } from './recentProblems';
+import { ExtensionState } from './state';
 
 let currentPanel: vscode.WebviewPanel | undefined;
-let currentProblemDir: string | undefined;
-let currentProblemUrl: string | undefined;
+let state: ExtensionState;
 let outputChannel: vscode.OutputChannel | undefined;
-
-const CURRENT_PROBLEM_URL_KEY = 'programmers.currentProblemUrl';
 
 function getOutputChannel(): vscode.OutputChannel {
   if (!outputChannel) {
@@ -54,6 +52,7 @@ async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> 
       }
     );
     await setCookie(context.secrets, cookie);
+    state.setConnection('ok');
     vscode.window.showInformationMessage('Programmers 로그인에 성공했습니다.');
     return true;
   } catch (err) {
@@ -102,6 +101,7 @@ async function checkConnectionOnce(
 ): Promise<void> {
   const cookie = await getCookie(context.secrets);
   if (!cookie) {
+    state.setConnection('none');
     if (!allowLoginRetry) {
       vscode.window.showErrorMessage('먼저 "Programmers: Set Session Cookie"로 쿠키를 설정하세요.');
       return;
@@ -114,6 +114,7 @@ async function checkConnectionOnce(
 
   try {
     const ok = await checkSession(cookie);
+    state.setConnection(ok ? 'ok' : 'expired');
     if (ok) {
       vscode.window.showInformationMessage('Programmers 연결 확인: 정상');
       return;
@@ -159,6 +160,7 @@ async function openProblemOnce(
         problem = parseProblemHtml(html, id);
       } catch (err) {
         if (err instanceof AuthExpiredError) {
+          state.setConnection('expired');
           if (!allowLoginRetry) {
             vscode.window.showErrorMessage('쿠키가 만료된 것 같습니다. 브라우저에서 다시 복사해 설정해주세요.');
             return;
@@ -180,9 +182,13 @@ async function openProblemOnce(
         fs.writeFileSync(solutionPath, buildSolutionFile(problem));
       }
       fs.writeFileSync(casesPath, buildCasesFile(problem));
-      currentProblemDir = dir;
-      currentProblemUrl = `https://school.programmers.co.kr/learn/courses/30/lessons/${problem.id}`;
-      await context.workspaceState.update(CURRENT_PROBLEM_URL_KEY, currentProblemUrl);
+      state.setConnection('ok');
+      await state.setCurrentProblem({
+        id: problem.id,
+        title: problem.title,
+        dir,
+        url: `https://school.programmers.co.kr/learn/courses/30/lessons/${problem.id}`,
+      });
       await addRecentProblem(context.globalState, { id: problem.id, title: problem.title });
 
       const doc = await vscode.workspace.openTextDocument(solutionPath);
@@ -207,6 +213,9 @@ async function openProblemOnce(
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  state = new ExtensionState(context.workspaceState);
+  state.restore((p) => fs.existsSync(path.join(p.dir, 'solution.py')));
+
   context.subscriptions.push(
     vscode.commands.registerCommand('programmers.setSessionCookie', async () => {
       const cookie = await vscode.window.showInputBox({
@@ -284,12 +293,13 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('programmers.runSampleTests', async () => {
-      if (!currentProblemDir) {
+      const problem = state.currentProblem;
+      if (!problem) {
         vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
         return;
       }
-      const solutionPath = path.join(currentProblemDir, 'solution.py');
-      const casesPath = path.join(currentProblemDir, 'cases.json');
+      const solutionPath = path.join(problem.dir, 'solution.py');
+      const casesPath = path.join(problem.dir, 'cases.json');
 
       try {
         const { results, debugOutput } = await vscode.window.withProgress(
@@ -304,6 +314,7 @@ export function activate(context: vscode.ExtensionContext) {
             return runSampleTests(solutionPath, casesPath, { signal: controller.signal });
           }
         );
+        state.setLastRun({ results, debugOutput });
         const passed = results.filter((r) => r.pass).length;
         const channel = getOutputChannel();
         channel.clear();
@@ -337,23 +348,13 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('programmers.copySolutionForSubmit', async () => {
-      if (!currentProblemDir) {
-        const savedUrl = context.workspaceState.get<string>(CURRENT_PROBLEM_URL_KEY);
-        if (savedUrl) {
-          const choice = await vscode.window.showErrorMessage(
-            '현재 열려 있는 문제를 찾을 수 없습니다 (창이 재시작되었을 수 있습니다). "Programmers: Open Problem"으로 문제를 다시 여세요.',
-            '웹사이트에서 열기'
-          );
-          if (choice === '웹사이트에서 열기') {
-            await vscode.env.openExternal(vscode.Uri.parse(savedUrl));
-          }
-        } else {
-          vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
-        }
+      const problem = state.currentProblem;
+      if (!problem) {
+        vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
         return;
       }
 
-      const solutionPath = path.join(currentProblemDir, 'solution.py');
+      const solutionPath = path.join(problem.dir, 'solution.py');
       let code: string;
       try {
         code = fs.readFileSync(solutionPath, 'utf-8');
@@ -367,8 +368,8 @@ export function activate(context: vscode.ExtensionContext) {
         '제출용 코드를 클립보드에 복사했습니다.',
         '웹사이트에서 열기'
       );
-      if (choice === '웹사이트에서 열기' && currentProblemUrl) {
-        await vscode.env.openExternal(vscode.Uri.parse(currentProblemUrl));
+      if (choice === '웹사이트에서 열기') {
+        await vscode.env.openExternal(vscode.Uri.parse(problem.url));
       }
     })
   );
