@@ -1,11 +1,11 @@
 import * as path from 'path';
-import { runSampleTests } from '../../src/core/testRunner';
+import { runSampleTests, TestRunCancelledError } from '../../src/core/testRunner';
 
 describe('runSampleTests', () => {
   const fixturesDir = path.join(__dirname, '..', 'fixtures');
 
-  test('runs the solution against each case and reports pass/fail', () => {
-    const { results } = runSampleTests(
+  test('runs the solution against each case and reports pass/fail', async () => {
+    const { results } = await runSampleTests(
       path.join(fixturesDir, 'sample-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -16,8 +16,8 @@ describe('runSampleTests', () => {
     ]);
   });
 
-  test('reports a runtime exception without crashing the whole run', () => {
-    const { results } = runSampleTests(
+  test('reports a runtime exception without crashing the whole run', async () => {
+    const { results } = await runSampleTests(
       path.join(fixturesDir, 'broken-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -26,8 +26,8 @@ describe('runSampleTests', () => {
     expect(results[0].error).toContain('NameError');
   });
 
-  test('still parses the final JSON line when the user solution prints debug output', () => {
-    const { results } = runSampleTests(
+  test('still parses the final JSON line when the user solution prints debug output', async () => {
+    const { results } = await runSampleTests(
       path.join(fixturesDir, 'printing-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -38,8 +38,8 @@ describe('runSampleTests', () => {
     ]);
   });
 
-  test('captures the user solution\'s print() output as debugOutput', () => {
-    const { debugOutput } = runSampleTests(
+  test("captures the user solution's print() output as debugOutput", async () => {
+    const { debugOutput } = await runSampleTests(
       path.join(fixturesDir, 'printing-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -49,8 +49,8 @@ describe('runSampleTests', () => {
     );
   });
 
-  test('debugOutput is empty when the solution prints nothing', () => {
-    const { debugOutput } = runSampleTests(
+  test('debugOutput is empty when the solution prints nothing', async () => {
+    const { debugOutput } = await runSampleTests(
       path.join(fixturesDir, 'sample-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -58,8 +58,8 @@ describe('runSampleTests', () => {
     expect(debugOutput).toBe('');
   });
 
-  test('reports timeMs as a non-negative number for every case, including failures', () => {
-    const passing = runSampleTests(
+  test('reports timeMs as a non-negative number for every case, including failures', async () => {
+    const passing = await runSampleTests(
       path.join(fixturesDir, 'sample-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -68,7 +68,7 @@ describe('runSampleTests', () => {
       expect(r.timeMs as number).toBeGreaterThanOrEqual(0);
     }
 
-    const failing = runSampleTests(
+    const failing = await runSampleTests(
       path.join(fixturesDir, 'broken-solution.py'),
       path.join(fixturesDir, 'sample-cases.json')
     );
@@ -78,13 +78,36 @@ describe('runSampleTests', () => {
     }
   });
 
-  test('kills the process and reports a clear error when the solution times out', () => {
-    expect(() =>
+  test('kills the process and reports a clear error when the solution times out', async () => {
+    await expect(
       runSampleTests(
         path.join(fixturesDir, 'infinite-loop-solution.py'),
         path.join(fixturesDir, 'sample-cases.json'),
-        500
+        { timeoutMs: 500 }
       )
-    ).toThrow('0.5초');
+    ).rejects.toThrow('0.5초');
+  });
+
+  test('rejects with TestRunCancelledError when the signal aborts mid-run', async () => {
+    const controller = new AbortController();
+    const promise = runSampleTests(
+      path.join(fixturesDir, 'infinite-loop-solution.py'),
+      path.join(fixturesDir, 'sample-cases.json'),
+      { timeoutMs: 10000, signal: controller.signal }
+    );
+    setTimeout(() => controller.abort(), 100);
+    await expect(promise).rejects.toThrow(TestRunCancelledError);
+  });
+
+  test('rejects immediately when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      runSampleTests(
+        path.join(fixturesDir, 'sample-solution.py'),
+        path.join(fixturesDir, 'sample-cases.json'),
+        { signal: controller.signal }
+      )
+    ).rejects.toThrow(TestRunCancelledError);
   });
 });

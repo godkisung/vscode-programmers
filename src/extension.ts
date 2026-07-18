@@ -5,7 +5,7 @@ import { getCookie, setCookie } from './secretsStore';
 import { fetchProblemHtml, checkSession, AuthExpiredError } from './core/fetchProblem';
 import { parseProblemHtml } from './core/parser';
 import { buildSolutionFile, buildCasesFile } from './core/scaffold';
-import { runSampleTests } from './core/testRunner';
+import { runSampleTests, TestRunCancelledError } from './core/testRunner';
 import { renderProblemHtml } from './webview/render';
 import { ProblemData } from './core/types';
 import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
@@ -292,7 +292,18 @@ export function activate(context: vscode.ExtensionContext) {
       const casesPath = path.join(currentProblemDir, 'cases.json');
 
       try {
-        const { results, debugOutput } = runSampleTests(solutionPath, casesPath);
+        const { results, debugOutput } = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: '샘플 테스트 실행 중...',
+            cancellable: true,
+          },
+          (_progress, token) => {
+            const controller = new AbortController();
+            token.onCancellationRequested(() => controller.abort());
+            return runSampleTests(solutionPath, casesPath, { signal: controller.signal });
+          }
+        );
         const passed = results.filter((r) => r.pass).length;
         const channel = getOutputChannel();
         channel.clear();
@@ -317,6 +328,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
         channel.show();
       } catch (err) {
+        if (err instanceof TestRunCancelledError) {
+          vscode.window.showInformationMessage('테스트 실행을 취소했습니다.');
+          return;
+        }
         vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
       }
     }),
