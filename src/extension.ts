@@ -13,6 +13,7 @@ import { detectProblemIdCandidate } from './core/clipboardCandidate';
 import { getRecentProblems, addRecentProblem } from './recentProblems';
 import { ExtensionState } from './state';
 import { ProblemsTreeProvider } from './sidebar';
+import { createStatusBarItems } from './statusBar';
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let state: ExtensionState;
@@ -221,6 +222,23 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.createTreeView('programmersProblems', { treeDataProvider: treeProvider })
   );
+
+  createStatusBarItems(state, context.subscriptions);
+
+  // 시작 시 백그라운드로 연결 상태 확인 (실패 시 unknown 유지)
+  void (async () => {
+    const cookie = await getCookie(context.secrets);
+    if (!cookie) {
+      state.setConnection('none');
+      return;
+    }
+    try {
+      state.setConnection((await checkSession(cookie)) ? 'ok' : 'expired');
+    } catch (err) {
+      // 네트워크 오류 등 — unknown 유지, 원인만 기록
+      getOutputChannel().appendLine(`[startup] 연결 확인 실패: ${(err as Error).message}`);
+    }
+  })();
 
   context.subscriptions.push(
     vscode.commands.registerCommand('programmers.openProblemById', async (id: string) => {
