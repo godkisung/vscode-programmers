@@ -14,6 +14,7 @@ import { getRecentProblems, addRecentProblem } from './recentProblems';
 import { ExtensionState } from './state';
 import { ProblemsTreeProvider } from './sidebar';
 import { createStatusBarItems } from './statusBar';
+import { InlineResultsProvider } from './inlineResults';
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let state: ExtensionState;
@@ -224,6 +225,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   createStatusBarItems(state, context.subscriptions);
+  new InlineResultsProvider(state, context.subscriptions);
 
   // 시작 시 백그라운드로 연결 상태 확인 (실패 시 unknown 유지)
   void (async () => {
