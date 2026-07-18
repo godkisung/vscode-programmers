@@ -12,6 +12,7 @@ import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/au
 import { detectProblemIdCandidate } from './core/clipboardCandidate';
 import { getRecentProblems, addRecentProblem } from './recentProblems';
 import { ExtensionState } from './state';
+import { ProblemsTreeProvider } from './sidebar';
 
 let currentPanel: vscode.WebviewPanel | undefined;
 let state: ExtensionState;
@@ -215,6 +216,35 @@ async function openProblemOnce(
 export function activate(context: vscode.ExtensionContext) {
   state = new ExtensionState(context.workspaceState);
   state.restore((p) => fs.existsSync(path.join(p.dir, 'solution.py')));
+
+  const treeProvider = new ProblemsTreeProvider(state, context.globalState, context.subscriptions);
+  context.subscriptions.push(
+    vscode.window.createTreeView('programmersProblems', { treeDataProvider: treeProvider })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('programmers.openProblemById', async (id: string) => {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
+        vscode.window.showErrorMessage('먼저 워크스페이스 폴더를 여세요.');
+        return;
+      }
+      await openProblemOnce(context, workspaceFolder, id, true);
+    }),
+
+    vscode.commands.registerCommand('programmers.revealSolution', async () => {
+      const problem = state.currentProblem;
+      if (!problem) return;
+      try {
+        const doc = await vscode.workspace.openTextDocument(path.join(problem.dir, 'solution.py'));
+        await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
+      } catch {
+        vscode.window.showErrorMessage(
+          'solution.py를 열지 못했습니다. 파일이 삭제되었으면 "Programmers: Open Problem"으로 다시 여세요.'
+        );
+      }
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('programmers.setSessionCookie', async () => {

@@ -28,17 +28,82 @@
       },
       {
         "command": "programmers.openProblem",
-        "title": "Programmers: Open Problem"
+        "title": "Programmers: Open Problem",
+        "icon": "$(add)"
       },
       {
         "command": "programmers.runSampleTests",
-        "title": "Programmers: Run Sample Tests"
+        "title": "Programmers: Run Sample Tests",
+        "icon": "$(play)"
       },
       {
         "command": "programmers.copySolutionForSubmit",
-        "title": "Programmers: Copy Solution for Submission"
+        "title": "Programmers: Copy Solution for Submission",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "programmers.openProblemById",
+        "title": "Programmers: Open Problem by Id"
+      },
+      {
+        "command": "programmers.revealSolution",
+        "title": "Programmers: Reveal Solution File"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "programmers",
+          "title": "Programmers",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "programmers": [
+        {
+          "id": "programmersProblems",
+          "name": "문제"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "programmersProblems",
+        "contents": "아직 연 문제가 없습니다.\n[문제 열기](command:programmers.openProblem)\n로그인이 필요하면 아래를 이용하세요.\n[로그인](command:programmers.login)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "programmers.openProblem",
+          "when": "view == programmersProblems",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "programmers.runSampleTests",
+          "when": "view == programmersProblems && viewItem == currentProblem",
+          "group": "inline@1"
+        },
+        {
+          "command": "programmers.copySolutionForSubmit",
+          "when": "view == programmersProblems && viewItem == currentProblem",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "programmers.openProblemById",
+          "when": "false"
+        },
+        {
+          "command": "programmers.revealSolution",
+          "when": "false"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run typecheck && npm run build",
