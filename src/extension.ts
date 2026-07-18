@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import { getCookie, setCookie } from './secretsStore';
 import { fetchProblemHtml, checkSession, AuthExpiredError } from './core/fetchProblem';
 import { parseProblemHtml } from './core/parser';
-import { buildSolutionFile, buildCasesFile } from './core/scaffold';
+import { buildSolutionFile, mergeCasesFile, StoredCase } from './core/scaffold';
+import { parseCaseValue } from './core/caseParser';
 import { runSampleTests, TestRunCancelledError } from './core/testRunner';
 import { renderProblemHtml } from './webview/render';
 import { ProblemData } from './core/types';
@@ -184,7 +185,10 @@ async function openProblemOnce(
       if (!fs.existsSync(solutionPath)) {
         fs.writeFileSync(solutionPath, buildSolutionFile(problem));
       }
-      fs.writeFileSync(casesPath, buildCasesFile(problem));
+      const existingCases = fs.existsSync(casesPath)
+        ? fs.readFileSync(casesPath, 'utf-8')
+        : undefined;
+      fs.writeFileSync(casesPath, mergeCasesFile(existingCases, problem));
       state.setConnection('ok');
       await state.setCurrentProblem({
         id: problem.id,
@@ -394,6 +398,61 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
         vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('programmers.addTestCase', async () => {
+      const problem = state.currentProblem;
+      if (!problem) {
+        vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
+        return;
+      }
+      const casesPath = path.join(problem.dir, 'cases.json');
+
+      const inputsText = await vscode.window.showInputBox({
+        prompt: '입력값을 쉼표로 구분해 입력하세요 (예: [1, 2, 3], "abc")',
+        ignoreFocusOut: true,
+      });
+      if (inputsText === undefined) return;
+      const parsedInputs = parseCaseValue(`[${inputsText}]`);
+      if (!parsedInputs.ok || !Array.isArray(parsedInputs.value)) {
+        vscode.window.showErrorMessage('입력값을 해석하지 못했습니다. JSON/파이썬 리터럴 형식으로 입력하세요.');
+        return;
+      }
+
+      const outputText = await vscode.window.showInputBox({
+        prompt: '기대 출력값을 입력하세요 (예: "leo" 또는 [1, 2])',
+        ignoreFocusOut: true,
+      });
+      if (outputText === undefined) return;
+      const parsedOutput = parseCaseValue(outputText);
+      if (!parsedOutput.ok) {
+        vscode.window.showErrorMessage('출력값을 해석하지 못했습니다. JSON/파이썬 리터럴 형식으로 입력하세요.');
+        return;
+      }
+
+      let cases: StoredCase[] = [];
+      try {
+        const parsed = JSON.parse(fs.readFileSync(casesPath, 'utf-8'));
+        if (Array.isArray(parsed)) cases = parsed;
+      } catch {
+        // 파일이 없거나 손상됨 — 새 배열로 시작
+      }
+      cases.push({ inputs: parsedInputs.value, output: parsedOutput.value, source: 'custom' });
+      try {
+        fs.mkdirSync(problem.dir, { recursive: true });
+        fs.writeFileSync(casesPath, JSON.stringify(cases, null, 2));
+      } catch (err) {
+        vscode.window.showErrorMessage(`cases.json을 저장하지 못했습니다: ${(err as Error).message}`);
+        return;
+      }
+
+      const choice = await vscode.window.showInformationMessage(
+        `커스텀 테스트 케이스를 추가했습니다 (총 ${cases.length}개).`,
+        '테스트 실행'
+      );
+      if (choice === '테스트 실행') {
+        await vscode.commands.executeCommand('programmers.runSampleTests');
       }
     }),
 

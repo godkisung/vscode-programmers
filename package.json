@@ -44,6 +44,11 @@
         "icon": "$(copy)"
       },
       {
+        "command": "programmers.addTestCase",
+        "title": "Programmers: Add Test Case",
+        "icon": "$(add)"
+      },
+      {
         "command": "programmers.openProblemById",
         "title": "Programmers: Open Problem by Id"
       },

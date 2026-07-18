@@ -1,4 +1,4 @@
-import { buildSolutionFile, buildCasesFile } from '../../src/core/scaffold';
+import { buildSolutionFile, buildCasesFile, mergeCasesFile } from '../../src/core/scaffold';
 import { ProblemData } from '../../src/core/types';
 
 const problem: ProblemData = {
@@ -48,10 +48,43 @@ describe('buildSolutionFile', () => {
 });
 
 describe('buildCasesFile', () => {
-  test('serializes only successfully parsed examples', () => {
+  test('serializes only successfully parsed examples, marked as sample', () => {
     const content = JSON.parse(buildCasesFile(problem));
     expect(content).toEqual([
-      { inputs: [['leo', 'kiki', 'eden'], ['eden', 'kiki']], output: 'leo' },
+      { inputs: [['leo', 'kiki', 'eden'], ['eden', 'kiki']], output: 'leo', source: 'sample' },
     ]);
+  });
+});
+
+describe('mergeCasesFile', () => {
+  const sampleCase = {
+    inputs: [['leo', 'kiki', 'eden'], ['eden', 'kiki']],
+    output: 'leo',
+    source: 'sample',
+  };
+
+  test('returns fresh sample cases when there is no existing file', () => {
+    expect(JSON.parse(mergeCasesFile(undefined, problem))).toEqual([sampleCase]);
+  });
+
+  test('preserves custom cases and refreshes sample cases', () => {
+    const existing = JSON.stringify([
+      { inputs: [['old'], ['stale']], output: 'old', source: 'sample' },
+      { inputs: [['mine'], []], output: 'mine', source: 'custom' },
+    ]);
+
+    expect(JSON.parse(mergeCasesFile(existing, problem))).toEqual([
+      sampleCase,
+      { inputs: [['mine'], []], output: 'mine', source: 'custom' },
+    ]);
+  });
+
+  test('treats legacy cases without a source field as samples (replaced)', () => {
+    const existing = JSON.stringify([{ inputs: [['legacy'], []], output: 'legacy' }]);
+    expect(JSON.parse(mergeCasesFile(existing, problem))).toEqual([sampleCase]);
+  });
+
+  test('rebuilds from fresh samples when the existing file is corrupt', () => {
+    expect(JSON.parse(mergeCasesFile('not json{', problem))).toEqual([sampleCase]);
   });
 });
