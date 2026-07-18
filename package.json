@@ -3,6 +3,7 @@
   "displayName": "Programmers Helper",
   "description": "Solve Programmers coding test problems locally in VS Code",
   "version": "0.0.1",
+  "publisher": "godkisng",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -40,9 +41,11 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run typecheck && npm run build",
+    "typecheck": "tsc --noEmit",
+    "build": "node esbuild.mjs",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "watch": "node esbuild.mjs --watch",
     "test": "jest"
   },
   "devDependencies": {
@@ -50,6 +53,7 @@
     "@types/node": "^20.0.0",
     "@types/sanitize-html": "^2.16.1",
     "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.1",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.0",
     "typescript": "^5.4.0"

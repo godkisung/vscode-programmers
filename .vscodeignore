@@ -1,0 +1,17 @@
+.vscode/**
+.git/**
+.claude/**
+.programmers/**
+src/**
+test/**
+docs/**
+node_modules/**
+!node_modules/playwright-core/**
+**/*.map
+**/*.ts
+!**/*.d.ts
+jest.config.js
+tsconfig.json
+esbuild.mjs
+.gitignore
+package-lock.json

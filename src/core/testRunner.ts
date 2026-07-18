@@ -1,15 +1,22 @@
 import { spawnSync } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import { RunResult, SampleTestRun } from './types';
 
-const RUNNER_PATH = path.join(__dirname, '..', '..', 'resources', 'runner.py');
+function resolveRunnerPath(): string {
+  // Bundled (out/extension.js): __dirname = out/
+  const bundled = path.join(__dirname, '..', 'resources', 'runner.py');
+  if (fs.existsSync(bundled)) return bundled;
+  // ts-jest / tsc (src/core/ or out/core/): __dirname = */core/
+  return path.join(__dirname, '..', '..', 'resources', 'runner.py');
+}
 
 export function runSampleTests(
   solutionPath: string,
   casesPath: string,
   timeoutMs = 10000
 ): SampleTestRun {
-  const result = spawnSync('python3', [RUNNER_PATH, solutionPath, casesPath], {
+  const result = spawnSync('python3', [resolveRunnerPath(), solutionPath, casesPath], {
     encoding: 'utf-8',
     timeout: timeoutMs,
   });
