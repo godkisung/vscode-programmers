@@ -80,6 +80,18 @@
         "contents": "아직 연 문제가 없습니다.\n[문제 열기](command:programmers.openProblem)\n로그인이 필요하면 아래를 이용하세요.\n[로그인](command:programmers.login)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "programmers.runSampleTests",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t"
+      },
+      {
+        "command": "programmers.openProblem",
+        "key": "ctrl+alt+o",
+        "mac": "cmd+alt+o"
+      }
+    ],
     "menus": {
       "view/title": [
         {
