@@ -80,6 +80,16 @@
         "contents": "아직 연 문제가 없습니다.\n[문제 열기](command:programmers.openProblem)\n로그인이 필요하면 아래를 이용하세요.\n[로그인](command:programmers.login)"
       }
     ],
+    "configuration": {
+      "title": "Programmers",
+      "properties": {
+        "programmers.runTestsOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "현재 문제의 solution.py를 저장하면 자동으로 샘플 테스트를 실행합니다."
+        }
+      }
+    },
     "keybindings": [
       {
         "command": "programmers.runSampleTests",

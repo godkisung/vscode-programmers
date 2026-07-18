@@ -219,6 +219,73 @@ async function openProblemOnce(
   );
 }
 
+let autoRunInFlight = false;
+let autoRunPending = false;
+
+async function runTestsForCurrentProblem(reveal: boolean): Promise<void> {
+  const problem = state.currentProblem;
+  if (!problem) {
+    if (reveal) {
+      vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
+    }
+    return;
+  }
+  const solutionPath = path.join(problem.dir, 'solution.py');
+  const casesPath = path.join(problem.dir, 'cases.json');
+
+  try {
+    const { results, debugOutput } = await vscode.window.withProgress(
+      {
+        location: reveal ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window,
+        title: '샘플 테스트 실행 중...',
+        cancellable: reveal,
+      },
+      (_progress, token) => {
+        const controller = new AbortController();
+        token.onCancellationRequested(() => controller.abort());
+        return runSampleTests(solutionPath, casesPath, { signal: controller.signal });
+      }
+    );
+    state.setLastRun({ results, debugOutput });
+    const passed = results.filter((r) => r.pass).length;
+    const channel = getOutputChannel();
+    channel.clear();
+    channel.appendLine('(참고: 로컬 측정치이며 실제 채점 서버 성능과 다를 수 있습니다)');
+    channel.appendLine(`${passed}/${results.length} 통과`);
+    for (const r of results) {
+      const timing = r.timeMs !== undefined ? ` (${r.timeMs}ms)` : '';
+      if (r.pass) {
+        channel.appendLine(`  [PASS] case ${r.index}${timing}`);
+      } else if (r.error) {
+        channel.appendLine(`  [FAIL] case ${r.index}: ${r.error}${timing}`);
+      } else {
+        channel.appendLine(
+          `  [FAIL] case ${r.index}: expected=${JSON.stringify(r.expected)} actual=${JSON.stringify(r.actual)}${timing}`
+        );
+      }
+    }
+    if (debugOutput) {
+      channel.appendLine('');
+      channel.appendLine('--- 프로그램 출력 (print) ---');
+      channel.appendLine(debugOutput);
+    }
+    if (reveal) {
+      channel.show();
+    }
+  } catch (err) {
+    if (err instanceof TestRunCancelledError) {
+      vscode.window.showInformationMessage('테스트 실행을 취소했습니다.');
+      return;
+    }
+    if (reveal) {
+      vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
+    } else {
+      getOutputChannel().appendLine(`[자동 실행] 테스트 실행 실패: ${(err as Error).message}`);
+      vscode.window.showWarningMessage(`자동 테스트 실행 실패: ${(err as Error).message}`);
+    }
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   state = new ExtensionState(context.workspaceState);
   state.restore((p) => fs.existsSync(path.join(p.dir, 'solution.py')));
@@ -347,57 +414,27 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('programmers.runSampleTests', async () => {
-      const problem = state.currentProblem;
-      if (!problem) {
-        vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
+      await runTestsForCurrentProblem(true);
+    }),
+
+    vscode.workspace.onDidSaveTextDocument(async (doc) => {
+      if (!vscode.workspace.getConfiguration('programmers').get<boolean>('runTestsOnSave', true)) {
         return;
       }
-      const solutionPath = path.join(problem.dir, 'solution.py');
-      const casesPath = path.join(problem.dir, 'cases.json');
-
+      const problem = state.currentProblem;
+      if (!problem || doc.uri.fsPath !== path.join(problem.dir, 'solution.py')) return;
+      if (autoRunInFlight) {
+        autoRunPending = true;
+        return;
+      }
+      autoRunInFlight = true;
       try {
-        const { results, debugOutput } = await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: '샘플 테스트 실행 중...',
-            cancellable: true,
-          },
-          (_progress, token) => {
-            const controller = new AbortController();
-            token.onCancellationRequested(() => controller.abort());
-            return runSampleTests(solutionPath, casesPath, { signal: controller.signal });
-          }
-        );
-        state.setLastRun({ results, debugOutput });
-        const passed = results.filter((r) => r.pass).length;
-        const channel = getOutputChannel();
-        channel.clear();
-        channel.appendLine('(참고: 로컬 측정치이며 실제 채점 서버 성능과 다를 수 있습니다)');
-        channel.appendLine(`${passed}/${results.length} 통과`);
-        for (const r of results) {
-          const timing = r.timeMs !== undefined ? ` (${r.timeMs}ms)` : '';
-          if (r.pass) {
-            channel.appendLine(`  [PASS] case ${r.index}${timing}`);
-          } else if (r.error) {
-            channel.appendLine(`  [FAIL] case ${r.index}: ${r.error}${timing}`);
-          } else {
-            channel.appendLine(
-              `  [FAIL] case ${r.index}: expected=${JSON.stringify(r.expected)} actual=${JSON.stringify(r.actual)}${timing}`
-            );
-          }
-        }
-        if (debugOutput) {
-          channel.appendLine('');
-          channel.appendLine('--- 프로그램 출력 (print) ---');
-          channel.appendLine(debugOutput);
-        }
-        channel.show();
-      } catch (err) {
-        if (err instanceof TestRunCancelledError) {
-          vscode.window.showInformationMessage('테스트 실행을 취소했습니다.');
-          return;
-        }
-        vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
+        do {
+          autoRunPending = false;
+          await runTestsForCurrentProblem(false);
+        } while (autoRunPending);
+      } finally {
+        autoRunInFlight = false;
       }
     }),
 
