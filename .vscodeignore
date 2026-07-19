@@ -9,7 +9,6 @@ node_modules/**
 !node_modules/playwright-core/**
 **/*.map
 **/*.ts
-!**/*.d.ts
 jest.config.js
 tsconfig.json
 esbuild.mjs
