@@ -2,7 +2,7 @@
   "name": "programmers-helper",
   "displayName": "Programmers Helper",
   "description": "Solve Programmers coding test problems locally in VS Code",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "godkisng",
   "engines": {
     "vscode": "^1.85.0"
