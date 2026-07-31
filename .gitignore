@@ -4,3 +4,7 @@ out/
 .vscode-test/
 __pycache__/
 .superpowers/
+
+# 개인 풀이 데이터 — 이 저장소는 PUBLIC이므로 절대 커밋하지 않는다.
+# 풀이는 별도 private 저장소(algo-wiki)로 분리 예정. programmers.dataRoot 설정 참고.
+.programmers/
