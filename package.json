@@ -87,6 +87,11 @@
           "type": "boolean",
           "default": true,
           "description": "현재 문제의 solution.py를 저장하면 자동으로 샘플 테스트를 실행합니다."
+        },
+        "programmers.dataRoot": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "문제 데이터(`solution.py`, `cases.json`, `problem.md`, `runs.jsonl`)를 저장할 폴더입니다. 비워두면 워크스페이스 안의 `.programmers`를 사용합니다. `~`, 절대 경로, 워크스페이스 기준 상대 경로를 쓸 수 있습니다.\n\n예: `~/workspace/algo-wiki/solutions`\n\n설정을 바꾼 뒤에는 문제를 다시 열어야 새 위치가 적용됩니다."
         }
       }
     },
@@ -155,6 +160,8 @@
   "dependencies": {
     "cheerio": "^1.2.0",
     "playwright-core": "^1.61.1",
-    "sanitize-html": "^2.17.5"
+    "sanitize-html": "^2.17.5",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   }
 }

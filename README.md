@@ -14,6 +14,7 @@ Programmers는 공식 API가 없어 인증된 사용자만 볼 수 있는 문제
 - **상태 바**: 연결 상태(클릭 시 재확인)와 현재 문제 통과 요약(클릭 시 재실행)을 항상 표시
 - `solution.py`에 **인라인 테스트 결과** — 실행/재실행 CodeLens 버튼, 실패 케이스는 노란 밑줄(Diagnostics)로 expected/actual 표시
 - **저장 시 자동 테스트 실행** (설정으로 끌 수 있음: `programmers.runTestsOnSave`)
+- 문제 설명을 `problem.md`로, 테스트 실행 기록을 `runs.jsonl`로 저장 — 저장 위치는 `programmers.dataRoot`로 바꿀 수 있습니다
 - 키보드 단축키: 테스트 실행(`Cmd/Ctrl+Alt+T`), 문제 열기(`Cmd/Ctrl+Alt+O`)
 - 세션 인증: Chrome 자동 로그인(기본) 또는 브라우저 쿠키 수동 붙여넣기(폴백)
 
@@ -60,6 +61,38 @@ VS Code에서 이 프로젝트를 열고 `F5`를 누르면 "Extension Developmen
 - 하단 상태 바에는 연결 상태와 현재 문제의 최근 통과 요약이 항상 표시됩니다. 클릭하면 각각 연결 재확인 / 테스트 재실행으로 이어집니다.
 - `solution.py`의 `def solution(...)` 줄 위에 **테스트 실행 CodeLens**와 **최근 통과 요약**이 표시되고, 실패한 케이스는 해당 줄에 경고(Diagnostics)로 expected/actual이 표시됩니다.
 - `programmers.runTestsOnSave` 설정(기본 켜짐)이 켜져 있으면 `solution.py`를 저장할 때마다 자동으로 샘플 테스트가 실행됩니다. `settings.json`에서 끌 수 있습니다.
+
+### 저장되는 파일
+
+문제 하나당 폴더 하나가 만들어집니다.
+
+| 파일 | 내용 |
+|---|---|
+| `solution.py` | 풀이 (스켈레톤 코드로 시작) |
+| `cases.json` | 예제 + 커스텀 테스트 케이스 |
+| `problem.md` | 문제 설명을 Markdown으로 변환한 것 + 입출력 예 원본 표 |
+| `runs.jsonl` | 테스트 실행 기록 (실행마다 한 줄 append) |
+
+`problem.md`는 예제 파싱에 실패한 케이스도 **원본 문자열 그대로** 남깁니다. 이 경우 `cases.json`에서는 해당 케이스가 빠지므로, 값을 잃지 않으려면 `problem.md`가 필요합니다.
+
+`runs.jsonl`은 덮어쓰지 않고 줄만 추가합니다. 여러 기기에서 같은 문제를 풀어도 git의 union merge로 안전하게 합쳐지도록 하기 위해서입니다.
+
+```jsonl
+{"ts":"2026-07-31T02:10:00.000Z","host":"macbook","trigger":"save","result":"fail","passed":1,"total":2,"code_hash":"9f2a1c4d7e01"}
+```
+
+### 설정
+
+| 설정 | 기본값 | 설명 |
+|---|---|---|
+| `programmers.runTestsOnSave` | `true` | `solution.py` 저장 시 샘플 테스트 자동 실행 |
+| `programmers.dataRoot` | `""` | 문제 데이터를 저장할 폴더. 비우면 워크스페이스 안의 `.programmers` |
+
+`programmers.dataRoot`는 `~`, 절대 경로, 워크스페이스 기준 상대 경로를 받습니다. 풀이를 이 저장소 밖(예: 개인 private 저장소)에 두고 싶을 때 사용합니다. 설정을 바꾼 뒤에는 문제를 다시 열어야 새 위치가 적용됩니다.
+
+```json
+{ "programmers.dataRoot": "~/workspace/algo-wiki/solutions" }
+```
 
 ## 인증 저장 방식
 

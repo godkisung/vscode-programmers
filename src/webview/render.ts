@@ -1,7 +1,6 @@
 import sanitizeHtml from 'sanitize-html';
 import { ProblemData } from '../core/types';
-
-const ORIGIN = 'https://school.programmers.co.kr';
+import { PROGRAMMERS_ORIGIN as ORIGIN, problemUrl, toAbsoluteUrl } from '../core/urls';
 
 const CSP_META =
   '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src https://school.programmers.co.kr https:; style-src \'unsafe-inline\';">';
@@ -92,7 +91,7 @@ export function renderProblemHtml(problem: ProblemData): string {
     },
   });
 
-  const originalUrl = `${ORIGIN}/learn/courses/30/lessons/${problem.id}`;
+  const originalUrl = problemUrl(problem.id);
 
   return `
     ${CSP_META}
@@ -101,14 +100,6 @@ export function renderProblemHtml(problem: ProblemData): string {
     <div>${sanitized}</div>
     <p><a href="${originalUrl}">원본 페이지에서 보기</a></p>
   `;
-}
-
-function toAbsoluteUrl(url: string | undefined): string {
-  if (!url) return '';
-  if (url.startsWith('#')) return url;
-  if (/^https?:\/\//.test(url)) return url;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return '';
-  return new URL(url, ORIGIN).toString();
 }
 
 function escapeHtml(text: string): string {

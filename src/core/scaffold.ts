@@ -1,7 +1,8 @@
 import { ProblemData, ParsedExample } from './types';
+import { problemUrl } from './urls';
 
 export function buildSolutionFile(problem: ProblemData): string {
-  const header = `# ${problem.title}\n# https://school.programmers.co.kr/learn/courses/30/lessons/${problem.id}\n`;
+  const header = `# ${problem.title}\n# ${problemUrl(problem.id)}\n`;
   const failedCount = problem.examples.filter((example) => !example.ok).length;
   const warning =
     failedCount > 0

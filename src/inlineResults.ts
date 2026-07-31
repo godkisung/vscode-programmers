@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
 import { ExtensionState } from './state';
 import { findSolutionDefLine } from './core/solutionLocator';
+import { solutionPath as toSolutionPath } from './core/paths';
 import { RunResult } from './core/types';
 
 function describeFailure(result: RunResult): string {
@@ -22,10 +22,9 @@ export class InlineResultsProvider implements vscode.CodeLensProvider {
     this.diagnostics = vscode.languages.createDiagnosticCollection('programmers');
     subscriptions.push(
       this.diagnostics,
-      vscode.languages.registerCodeLensProvider(
-        { language: 'python', pattern: '**/.programmers/*/solution.py' },
-        this
-      ),
+      // dataRoot 설정으로 풀이 폴더가 워크스페이스 밖에 있을 수 있으므로 경로를
+      // 좁게 걸지 않는다. 실제 대상 여부는 provideCodeLenses에서 정확히 판별한다.
+      vscode.languages.registerCodeLensProvider({ language: 'python', pattern: '**/solution.py' }, this),
       this.state.onDidChangeTestResults(() => {
         this.lensEmitter.fire();
         this.updateDiagnostics();
@@ -39,7 +38,7 @@ export class InlineResultsProvider implements vscode.CodeLensProvider {
 
   private currentSolutionPath(): string | undefined {
     const problem = this.state.currentProblem;
-    return problem ? path.join(problem.dir, 'solution.py') : undefined;
+    return problem ? toSolutionPath(problem.dir) : undefined;
   }
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {

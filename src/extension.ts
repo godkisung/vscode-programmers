@@ -9,6 +9,23 @@ import { parseCaseValue } from './core/caseParser';
 import { runSampleTests, TestRunCancelledError } from './core/testRunner';
 import { renderProblemHtml } from './webview/render';
 import { ProblemData } from './core/types';
+import { buildProblemMarkdown } from './core/problemMarkdown';
+import { problemUrl } from './core/urls';
+import {
+  resolveDataRoot,
+  problemDir,
+  solutionPath,
+  casesPath,
+  problemMdPath,
+  runsLogPath,
+} from './core/paths';
+import {
+  appendRunEvent,
+  buildErrorRunEvent,
+  buildRunEvent,
+  RunContext,
+  RunTrigger,
+} from './core/runLog';
 import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
 import { detectProblemIdCandidate } from './core/clipboardCandidate';
 import { getRecentProblems, addRecentProblem } from './recentProblems';
@@ -26,6 +43,11 @@ function getOutputChannel(): vscode.OutputChannel {
     outputChannel = vscode.window.createOutputChannel('Programmers');
   }
   return outputChannel;
+}
+
+function getDataRoot(workspaceFolder: vscode.WorkspaceFolder): string {
+  const configured = vscode.workspace.getConfiguration('programmers').get<string>('dataRoot');
+  return resolveDataRoot(workspaceFolder.uri.fsPath, configured);
 }
 
 async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> {
@@ -178,27 +200,41 @@ async function openProblemOnce(
         return;
       }
 
-      const dir = path.join(workspaceFolder.uri.fsPath, '.programmers', id);
-      fs.mkdirSync(dir, { recursive: true });
-      const solutionPath = path.join(dir, 'solution.py');
-      const casesPath = path.join(dir, 'cases.json');
-      if (!fs.existsSync(solutionPath)) {
-        fs.writeFileSync(solutionPath, buildSolutionFile(problem));
+      const dir = problemDir(getDataRoot(workspaceFolder), id);
+      const solutionFile = solutionPath(dir);
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        if (!fs.existsSync(solutionFile)) {
+          fs.writeFileSync(solutionFile, buildSolutionFile(problem));
+        }
+        const existingCases = fs.existsSync(casesPath(dir))
+          ? fs.readFileSync(casesPath(dir), 'utf-8')
+          : undefined;
+        fs.writeFileSync(casesPath(dir), mergeCasesFile(existingCases, problem));
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `문제 파일을 저장하지 못했습니다: ${(err as Error).message} (programmers.dataRoot 설정을 확인하세요)`
+        );
+        return;
       }
-      const existingCases = fs.existsSync(casesPath)
-        ? fs.readFileSync(casesPath, 'utf-8')
-        : undefined;
-      fs.writeFileSync(casesPath, mergeCasesFile(existingCases, problem));
+
+      // problem.md는 실패해도 문제 풀이를 막지 않는다 — 위키용 부가 산출물이다.
+      try {
+        fs.writeFileSync(problemMdPath(dir), buildProblemMarkdown(problem));
+      } catch (err) {
+        getOutputChannel().appendLine(`[problem.md] 저장 실패: ${(err as Error).message}`);
+      }
+
       state.setConnection('ok');
       await state.setCurrentProblem({
         id: problem.id,
         title: problem.title,
         dir,
-        url: `https://school.programmers.co.kr/learn/courses/30/lessons/${problem.id}`,
+        url: problemUrl(problem.id),
       });
       await addRecentProblem(context.globalState, { id: problem.id, title: problem.title });
 
-      const doc = await vscode.workspace.openTextDocument(solutionPath);
+      const doc = await vscode.workspace.openTextDocument(solutionFile);
       await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
 
       if (!currentPanel) {
@@ -222,7 +258,28 @@ async function openProblemOnce(
 let autoRunInFlight = false;
 let autoRunPending = false;
 
-async function runTestsForCurrentProblem(reveal: boolean): Promise<void> {
+/**
+ * runs.jsonl 기록. 로그가 실패해도 테스트 결과 자체는 이미 나왔으므로
+ * 사용자 흐름을 막지 않고 출력 채널에만 남긴다.
+ */
+function recordRun(problemDirPath: string, event: ReturnType<typeof buildRunEvent>): void {
+  try {
+    appendRunEvent(runsLogPath(problemDirPath), event);
+  } catch (err) {
+    getOutputChannel().appendLine(`[runs.jsonl] 기록 실패: ${(err as Error).message}`);
+  }
+}
+
+function readSolutionForHash(problemDirPath: string): string | undefined {
+  try {
+    return fs.readFileSync(solutionPath(problemDirPath), 'utf-8');
+  } catch {
+    return undefined;
+  }
+}
+
+async function runTestsForCurrentProblem(trigger: RunTrigger): Promise<void> {
+  const reveal = trigger === 'manual';
   const problem = state.currentProblem;
   if (!problem) {
     if (reveal) {
@@ -230,8 +287,9 @@ async function runTestsForCurrentProblem(reveal: boolean): Promise<void> {
     }
     return;
   }
-  const solutionPath = path.join(problem.dir, 'solution.py');
-  const casesPath = path.join(problem.dir, 'cases.json');
+  const solutionFile = solutionPath(problem.dir);
+  const casesFile = casesPath(problem.dir);
+  const runContext: RunContext = { trigger, code: readSolutionForHash(problem.dir) };
 
   try {
     const { results, debugOutput } = await vscode.window.withProgress(
@@ -243,10 +301,11 @@ async function runTestsForCurrentProblem(reveal: boolean): Promise<void> {
       (_progress, token) => {
         const controller = new AbortController();
         token.onCancellationRequested(() => controller.abort());
-        return runSampleTests(solutionPath, casesPath, { signal: controller.signal });
+        return runSampleTests(solutionFile, casesFile, { signal: controller.signal });
       }
     );
     state.setLastRun({ results, debugOutput });
+    recordRun(problem.dir, buildRunEvent(results, runContext));
     const passed = results.filter((r) => r.pass).length;
     const channel = getOutputChannel();
     channel.clear();
@@ -277,6 +336,8 @@ async function runTestsForCurrentProblem(reveal: boolean): Promise<void> {
       vscode.window.showInformationMessage('테스트 실행을 취소했습니다.');
       return;
     }
+    // 취소는 시도가 아니지만, 실행 실패(문법 오류·타임아웃)는 기록할 가치가 있는 시행착오다.
+    recordRun(problem.dir, buildErrorRunEvent(runContext));
     if (reveal) {
       vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
     } else {
@@ -288,7 +349,7 @@ async function runTestsForCurrentProblem(reveal: boolean): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext) {
   state = new ExtensionState(context.workspaceState);
-  state.restore((p) => fs.existsSync(path.join(p.dir, 'solution.py')));
+  state.restore((p) => fs.existsSync(solutionPath(p.dir)));
 
   const treeProvider = new ProblemsTreeProvider(state, context.globalState, context.subscriptions);
   context.subscriptions.push(
@@ -327,7 +388,7 @@ export function activate(context: vscode.ExtensionContext) {
       const problem = state.currentProblem;
       if (!problem) return;
       try {
-        const doc = await vscode.workspace.openTextDocument(path.join(problem.dir, 'solution.py'));
+        const doc = await vscode.workspace.openTextDocument(solutionPath(problem.dir));
         await vscode.window.showTextDocument(doc, vscode.ViewColumn.One);
       } catch {
         vscode.window.showErrorMessage(
@@ -414,7 +475,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     vscode.commands.registerCommand('programmers.runSampleTests', async () => {
-      await runTestsForCurrentProblem(true);
+      await runTestsForCurrentProblem('manual');
     }),
 
     vscode.workspace.onDidSaveTextDocument(async (doc) => {
@@ -422,7 +483,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       const problem = state.currentProblem;
-      if (!problem || doc.uri.fsPath !== path.join(problem.dir, 'solution.py')) return;
+      if (!problem || doc.uri.fsPath !== solutionPath(problem.dir)) return;
       if (autoRunInFlight) {
         autoRunPending = true;
         return;
@@ -431,7 +492,7 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         do {
           autoRunPending = false;
-          await runTestsForCurrentProblem(false);
+          await runTestsForCurrentProblem('save');
         } while (autoRunPending);
       } finally {
         autoRunInFlight = false;
@@ -444,7 +505,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage('먼저 "Programmers: Open Problem"으로 문제를 여세요.');
         return;
       }
-      const casesPath = path.join(problem.dir, 'cases.json');
+      const casesFile = casesPath(problem.dir);
 
       const inputsText = await vscode.window.showInputBox({
         prompt: '입력값을 쉼표로 구분해 입력하세요 (예: [1, 2, 3], "abc")',
@@ -470,7 +531,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       let cases: StoredCase[] = [];
       try {
-        const parsed = JSON.parse(fs.readFileSync(casesPath, 'utf-8'));
+        const parsed = JSON.parse(fs.readFileSync(casesFile, 'utf-8'));
         if (Array.isArray(parsed)) cases = parsed;
       } catch {
         // 파일이 없거나 손상됨 — 새 배열로 시작
@@ -478,7 +539,7 @@ export function activate(context: vscode.ExtensionContext) {
       cases.push({ inputs: parsedInputs.value, output: parsedOutput.value, source: 'custom' });
       try {
         fs.mkdirSync(problem.dir, { recursive: true });
-        fs.writeFileSync(casesPath, JSON.stringify(cases, null, 2));
+        fs.writeFileSync(casesFile, JSON.stringify(cases, null, 2));
       } catch (err) {
         vscode.window.showErrorMessage(`cases.json을 저장하지 못했습니다: ${(err as Error).message}`);
         return;
@@ -500,10 +561,9 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const solutionPath = path.join(problem.dir, 'solution.py');
       let code: string;
       try {
-        code = fs.readFileSync(solutionPath, 'utf-8');
+        code = fs.readFileSync(solutionPath(problem.dir), 'utf-8');
       } catch (err) {
         vscode.window.showErrorMessage(`코드를 읽지 못했습니다: ${(err as Error).message}`);
         return;
