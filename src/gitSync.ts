@@ -35,6 +35,11 @@ export class GitSync {
     return this.repoRootCache.get(dataRoot);
   }
 
+  /** dataRoot가 속한 저장소의 루트. 위키 노트 경로를 계산할 때도 쓴다. */
+  async repoRoot(dataRoot: string): Promise<string | undefined> {
+    return this.repoRootFor(dataRoot);
+  }
+
   /**
    * 문제를 열기 전에 원격 변경을 받아온다.
    *
@@ -72,14 +77,22 @@ export class GitSync {
    * 저장소 전체가 아니라 dataRoot 아래만 스테이징한다 — 데이터 폴더가
    * 소스 코드와 같은 저장소에 있을 수 있기 때문이다.
    */
-  async commitOnPass(dataRoot: string, problem: { id: string; title: string }): Promise<void> {
+  async commitOnPass(
+    dataRoot: string,
+    problem: { id: string; title: string },
+    extraPaths: string[] = []
+  ): Promise<void> {
     if (!this.enabled) return;
 
     const repoRoot = await this.repoRootFor(dataRoot);
     if (!repoRoot) return;
 
     try {
-      const committed = await stageAndCommit(repoRoot, dataRoot, buildCommitMessage(problem));
+      const committed = await stageAndCommit(
+        repoRoot,
+        [dataRoot, ...extraPaths],
+        buildCommitMessage(problem)
+      );
       if (committed) {
         this.log(`[git] 커밋: ${buildCommitMessage(problem)}`);
         this.schedulePush(repoRoot);

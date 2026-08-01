@@ -4,6 +4,7 @@ import { ProblemData } from '../../src/core/types';
 const problem: ProblemData = {
   id: '42862',
   title: '완주하지 못한 선수',
+  level: 2,
   descriptionHtml: '<p>desc</p>',
   paramNames: ['participant', 'completion'],
   skeletonCode: "def solution(participant, completion):\n    answer = ''\n    return answer",

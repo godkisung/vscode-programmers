@@ -132,22 +132,27 @@ async function revParseHead(repoRoot: string): Promise<string | undefined> {
  * 소스 코드와 같은 저장소 안에 있을 수 있고, 그 경우 작업 중이던 코드까지
  * 함께 커밋된다.
  *
+ * 위키 노트는 문제 폴더 밖(vault/)에 생기므로 여러 경로를 받는다.
+ *
  * @returns 커밋했으면 true, 커밋할 변경이 없었으면 false
  */
 export async function stageAndCommit(
   repoRoot: string,
-  pathspec: string,
+  pathspec: string | string[],
   message: string
 ): Promise<boolean> {
-  const add = await runGit(['add', '--', pathspec], repoRoot);
+  const paths = (Array.isArray(pathspec) ? pathspec : [pathspec]).filter(Boolean);
+  if (paths.length === 0) return false;
+
+  const add = await runGit(['add', '--', ...paths], repoRoot);
   if (add.code !== 0) {
     throw new Error(`git add 실패: ${add.stderr}`);
   }
 
-  const staged = await runGit(['diff', '--cached', '--quiet', '--', pathspec], repoRoot);
+  const staged = await runGit(['diff', '--cached', '--quiet', '--', ...paths], repoRoot);
   if (staged.code === 0) return false; // 종료 코드 0 = 차이 없음
 
-  const commit = await runGit(['commit', '-m', message, '--', pathspec], repoRoot);
+  const commit = await runGit(['commit', '-m', message, '--', ...paths], repoRoot);
   if (commit.code !== 0) {
     throw new Error(`git commit 실패: ${commit.stderr || commit.stdout}`);
   }

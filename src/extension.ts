@@ -27,6 +27,7 @@ import {
   RunTrigger,
 } from './core/runLog';
 import { GitSync } from './gitSync';
+import { DEFAULT_EXPORT_COMMAND, WikiExportConfig, runExport } from './wikiExport';
 import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
 import { detectProblemIdCandidate } from './core/clipboardCandidate';
 import { getRecentProblems, addRecentProblem } from './recentProblems';
@@ -290,6 +291,46 @@ function readSolutionForHash(problemDirPath: string): string | undefined {
   }
 }
 
+/**
+ * 전체 통과 뒤 처리: 위키 노트를 만들고 커밋한다.
+ *
+ * export를 먼저 돌리는 이유는 생성된 노트까지 같은 커밋에 담기 위해서다.
+ * export가 실패해도 풀이 자체는 커밋한다 — 위키는 부가 가치이지 필수가 아니다.
+ */
+function readExportConfig(): WikiExportConfig {
+  const config = vscode.workspace.getConfiguration('programmers');
+  return {
+    enabled: config.get<boolean>('export.onPass', false),
+    command: config.get<string>('export.command', DEFAULT_EXPORT_COMMAND) || DEFAULT_EXPORT_COMMAND,
+  };
+}
+
+async function finishPass(problem: { id: string; title: string; dir: string }): Promise<void> {
+  const extraPaths: string[] = [];
+  const config = readExportConfig();
+
+  if (config.enabled) {
+    const repoRoot = await gitSync.repoRoot(problem.dir);
+    if (repoRoot) {
+      const channel = getOutputChannel();
+      try {
+        const output = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Window, title: '위키 노트 생성 중...' },
+          () => runExport({ cwd: repoRoot, problemId: problem.id, command: config.command })
+        );
+        channel.appendLine(`[wiki] ${problem.id}\n${output}`);
+        const vault = path.join(repoRoot, 'vault');
+        if (fs.existsSync(vault)) extraPaths.push(vault);
+      } catch (err) {
+        channel.appendLine(`[wiki] export 실패: ${(err as Error).message}`);
+        vscode.window.showWarningMessage(`위키 노트 생성 실패: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  await gitSync.commitOnPass(problem.dir, { id: problem.id, title: problem.title }, extraPaths);
+}
+
 async function runTestsForCurrentProblem(trigger: RunTrigger): Promise<void> {
   const reveal = trigger === 'manual';
   const problem = state.currentProblem;
@@ -319,9 +360,9 @@ async function runTestsForCurrentProblem(trigger: RunTrigger): Promise<void> {
     state.setLastRun({ results, debugOutput });
     recordRun(problem.dir, buildRunEvent(results, runContext));
     const passed = results.filter((r) => r.pass).length;
-    // 전체 통과했을 때만 커밋한다 — 풀다 만 코드로 히스토리를 채우지 않는다.
+    // 전체 통과했을 때만 위키로 내보내고 커밋한다 — 풀다 만 코드로 히스토리를 채우지 않는다.
     if (results.length > 0 && passed === results.length) {
-      void gitSync.commitOnPass(problem.dir, { id: problem.id, title: problem.title });
+      void finishPass(problem);
     }
     const channel = getOutputChannel();
     channel.clear();

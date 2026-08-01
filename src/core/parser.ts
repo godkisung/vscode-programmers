@@ -6,6 +6,7 @@ const TITLE_SELECTORS = ['.algorithm-title', 'h4.tit-area', 'h1'];
 const DESCRIPTION_SELECTORS = ['.guide-section-description', '.markdown', 'article'];
 const SKELETON_SELECTORS = ['#code', 'textarea#code_editor', 'pre.skeleton-code'];
 const EXAMPLE_TABLE_SELECTORS = ['table.table', 'div.example table', 'table'];
+const LEVEL_SELECTORS = ['[data-level]', '.challenge-level', '.lesson-level', '.level'];
 
 export function parseProblemHtml(html: string, id: string): ProblemData {
   const $ = cheerio.load(html);
@@ -15,7 +16,31 @@ export function parseProblemHtml(html: string, id: string): ProblemData {
   const skeletonCode = firstMatchText($, SKELETON_SELECTORS) ?? null;
   const { paramNames, examples } = parseExampleTable($, EXAMPLE_TABLE_SELECTORS);
 
-  return { id, title, descriptionHtml, paramNames, skeletonCode, examples };
+  return { id, title, level: parseLevel($), descriptionHtml, paramNames, skeletonCode, examples };
+}
+
+/**
+ * 난이도를 찾는다. 전용 셀렉터를 먼저 보고, 없으면 문서 전체에서 `Lv. N` 표기를 찾는다.
+ *
+ * 찾지 못하면 null을 돌려준다 — 난이도는 사실 정보이므로 추정하지 않는다.
+ */
+export function parseLevel($: cheerio.CheerioAPI): number | null {
+  for (const sel of LEVEL_SELECTORS) {
+    const el = $(sel).first();
+    if (!el.length) continue;
+    const level = toLevel(el.attr('data-level') ?? el.text());
+    if (level !== null) return level;
+  }
+  return toLevel($.root().text());
+}
+
+function toLevel(text: string | undefined): number | null {
+  // data-level="3" 처럼 값만 있는 경우
+  const bare = text?.trim();
+  if (bare && /^[0-5]$/.test(bare)) return Number(bare);
+
+  const match = text?.match(/(?:Lv\.?|레벨)\s*([0-5])(?![0-9])/i);
+  return match ? Number(match[1]) : null;
 }
 
 function firstMatchText($: cheerio.CheerioAPI, selectors: string[]): string | null {

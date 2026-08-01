@@ -4,6 +4,7 @@ import { ProblemData } from '../../src/core/types';
 const problem: ProblemData = {
   id: '12973',
   title: '짝지어 제거하기',
+  level: 2,
   descriptionHtml:
     '<p>알파벳 소문자로 이루어진 <strong>문자열</strong>입니다.</p><ul><li>길이는 1,000,000 이하</li></ul>',
   paramNames: ['s'],
@@ -124,5 +125,16 @@ describe('buildProblemMarkdown', () => {
     expect(buildProblemMarkdown(problem, FIXED_DATE)).toContain(
       '[원본 페이지에서 보기](https://school.programmers.co.kr/learn/courses/30/lessons/12973)'
     );
+  });
+});
+
+describe('level in frontmatter', () => {
+  test('writes the parsed level', () => {
+    expect(buildProblemMarkdown(problem, FIXED_DATE)).toContain('level: 2');
+  });
+
+  test('writes null rather than guessing when the page had none', () => {
+    // 난이도는 사실 정보다. 모르면 비워두는 게 맞다.
+    expect(buildProblemMarkdown({ ...problem, level: null }, FIXED_DATE)).toContain('level: null');
   });
 });

@@ -61,6 +61,7 @@ export function buildProblemMarkdown(problem: ProblemData, fetchedAt: Date = new
     `title: ${yamlScalar(problem.title)}`,
     `url: ${url}`,
     'platform: programmers',
+    `level: ${problem.level ?? 'null'}`,
     `fetched_at: ${fetchedAt.toISOString()}`,
     '---',
   ].join('\n');

@@ -4,6 +4,7 @@ import { ProblemData } from '../../src/core/types';
 const problem: ProblemData = {
   id: '42862',
   title: '완주하지 못한 선수',
+  level: 2,
   descriptionHtml: '<p>설명 <img src="/images/a.png"><script>alert(1)</script></p>',
   paramNames: [],
   skeletonCode: null,

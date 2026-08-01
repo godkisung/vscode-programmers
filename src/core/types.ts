@@ -13,6 +13,8 @@ export interface ParsedExample {
 export interface ProblemData {
   id: string;
   title: string;
+  /** Programmers 난이도(0~5). 페이지에서 찾지 못하면 null — 추정하지 않는다. */
+  level: number | null;
   descriptionHtml: string;
   paramNames: string[];
   skeletonCode: string | null;

@@ -70,7 +70,7 @@ VS Code에서 이 프로젝트를 열고 `F5`를 누르면 "Extension Developmen
 |---|---|
 | `solution.py` | 풀이 (스켈레톤 코드로 시작) |
 | `cases.json` | 예제 + 커스텀 테스트 케이스 |
-| `problem.md` | 문제 설명을 Markdown으로 변환한 것 + 입출력 예 원본 표 |
+| `problem.md` | 문제 설명을 Markdown으로 변환한 것 + 입출력 예 원본 표 (난이도 포함) |
 | `runs.jsonl` | 테스트 실행 기록 (실행마다 한 줄 append) |
 
 `problem.md`는 예제 파싱에 실패한 케이스도 **원본 문자열 그대로** 남깁니다. 이 경우 `cases.json`에서는 해당 케이스가 빠지므로, 값을 잃지 않으려면 `problem.md`가 필요합니다.
@@ -88,6 +88,8 @@ VS Code에서 이 프로젝트를 열고 `F5`를 누르면 "Extension Developmen
 | `programmers.runTestsOnSave` | `true` | `solution.py` 저장 시 샘플 테스트 자동 실행 |
 | `programmers.dataRoot` | `""` | 문제 데이터를 저장할 폴더. 비우면 워크스페이스 안의 `.programmers` |
 | `programmers.git.autoSync` | `false` | `dataRoot`가 속한 git 저장소를 자동 동기화 |
+| `programmers.export.onPass` | `false` | 전체 케이스 통과 시 위키 노트 생성 명령 실행 |
+| `programmers.export.command` | `.venv/bin/python tools/export.py ${problemId}` | 위 설정이 켜졌을 때 실행할 명령 |
 
 `programmers.dataRoot`는 `~`, 절대 경로, 워크스페이스 기준 상대 경로를 받습니다. 풀이를 이 저장소 밖(예: 개인 private 저장소)에 두고 싶을 때 사용합니다. 설정을 바꾼 뒤에는 문제를 다시 열어야 새 위치가 적용됩니다.
 
@@ -109,6 +111,15 @@ VS Code에서 이 프로젝트를 열고 `F5`를 누르면 "Extension Developmen
 - 커밋은 **문제 폴더 아래 파일만** 대상으로 합니다. 같은 저장소에서 작업 중이던 다른 변경은 스테이징하지 않습니다.
 - 오프라인이면 조용히 넘어갑니다. 로컬 커밋은 쌓이고 다음에 함께 올라갑니다.
 - 전체 케이스를 통과했을 때만 커밋하므로, 풀다 만 코드가 히스토리에 쌓이지 않습니다.
+
+### 통과 시 위키 노트 자동 생성
+
+`programmers.export.onPass`를 켜면 전체 케이스를 통과했을 때 `programmers.export.command`를 실행합니다. 명령은 `dataRoot`가 속한 git 저장소의 루트에서 셸로 실행되고, `${problemId}`가 문제 번호로 치환됩니다.
+
+`programmers.git.autoSync`도 켜져 있으면 **생성된 노트까지 같은 커밋에 담깁니다.** export를 먼저 돌리고 그다음 커밋하기 때문입니다.
+
+- export가 실패해도 풀이 자체는 커밋됩니다 — 위키는 부가 가치이지 필수가 아닙니다.
+- 로컬 LLM을 쓰면 수 분이 걸릴 수 있습니다. 진행 중에는 상태 표시가 뜹니다.
 
 ## 인증 저장 방식
 
