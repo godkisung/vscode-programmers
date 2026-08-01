@@ -88,6 +88,11 @@
           "default": true,
           "description": "현재 문제의 solution.py를 저장하면 자동으로 샘플 테스트를 실행합니다."
         },
+        "programmers.git.autoSync": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "여러 기기에서 문제를 풀 때 `programmers.dataRoot` 폴더가 속한 git 저장소를 자동으로 동기화합니다. 문제를 열 때 `git pull --rebase`, 전체 케이스 통과 시 자동 커밋, 잠시 뒤 push합니다.\n\n**충돌은 자동으로 해결하지 않습니다** — 알림만 띄우고 직접 처리하도록 남겨둡니다. 커밋은 `dataRoot` 아래 파일만 대상으로 하므로 같은 저장소의 다른 변경은 건드리지 않습니다."
+        },
         "programmers.dataRoot": {
           "type": "string",
           "default": "",

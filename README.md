@@ -87,12 +87,28 @@ VS Code에서 이 프로젝트를 열고 `F5`를 누르면 "Extension Developmen
 |---|---|---|
 | `programmers.runTestsOnSave` | `true` | `solution.py` 저장 시 샘플 테스트 자동 실행 |
 | `programmers.dataRoot` | `""` | 문제 데이터를 저장할 폴더. 비우면 워크스페이스 안의 `.programmers` |
+| `programmers.git.autoSync` | `false` | `dataRoot`가 속한 git 저장소를 자동 동기화 |
 
 `programmers.dataRoot`는 `~`, 절대 경로, 워크스페이스 기준 상대 경로를 받습니다. 풀이를 이 저장소 밖(예: 개인 private 저장소)에 두고 싶을 때 사용합니다. 설정을 바꾼 뒤에는 문제를 다시 열어야 새 위치가 적용됩니다.
 
 ```json
 { "programmers.dataRoot": "~/workspace/algo-wiki/solutions" }
 ```
+
+### 여러 기기에서 풀기
+
+`programmers.git.autoSync`를 켜면 `dataRoot`가 속한 git 저장소를 확장이 대신 동기화합니다.
+
+| 시점 | 동작 |
+|---|---|
+| 문제를 열 때 | `git pull --rebase --autostash` |
+| 전체 케이스 통과 시 | `solve(12973): 짝지어 제거하기` 형태로 커밋 |
+| 커밋 후 잠시 뒤 / 창을 닫을 때 | `git push` |
+
+- **충돌은 자동으로 해결하지 않습니다.** rebase를 되돌리고 알림만 띄웁니다 — 자동화의 목적은 마찰 제거이지 판단 대행이 아닙니다.
+- 커밋은 **문제 폴더 아래 파일만** 대상으로 합니다. 같은 저장소에서 작업 중이던 다른 변경은 스테이징하지 않습니다.
+- 오프라인이면 조용히 넘어갑니다. 로컬 커밋은 쌓이고 다음에 함께 올라갑니다.
+- 전체 케이스를 통과했을 때만 커밋하므로, 풀다 만 코드가 히스토리에 쌓이지 않습니다.
 
 ## 인증 저장 방식
 

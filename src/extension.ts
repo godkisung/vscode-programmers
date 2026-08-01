@@ -26,6 +26,7 @@ import {
   RunContext,
   RunTrigger,
 } from './core/runLog';
+import { GitSync } from './gitSync';
 import { runAutoLogin, BrowserLaunchError, LoginCancelledError } from './core/autoLogin';
 import { detectProblemIdCandidate } from './core/clipboardCandidate';
 import { getRecentProblems, addRecentProblem } from './recentProblems';
@@ -37,6 +38,9 @@ import { InlineResultsProvider } from './inlineResults';
 let currentPanel: vscode.WebviewPanel | undefined;
 let state: ExtensionState;
 let outputChannel: vscode.OutputChannel | undefined;
+let gitSync: GitSync;
+/** 창을 닫을 때 남은 push를 보내기 위해 마지막으로 쓴 데이터 폴더를 기억한다. */
+let lastDataRoot: string | undefined;
 
 function getOutputChannel(): vscode.OutputChannel {
   if (!outputChannel) {
@@ -47,7 +51,9 @@ function getOutputChannel(): vscode.OutputChannel {
 
 function getDataRoot(workspaceFolder: vscode.WorkspaceFolder): string {
   const configured = vscode.workspace.getConfiguration('programmers').get<string>('dataRoot');
-  return resolveDataRoot(workspaceFolder.uri.fsPath, configured);
+  const dataRoot = resolveDataRoot(workspaceFolder.uri.fsPath, configured);
+  lastDataRoot = dataRoot;
+  return dataRoot;
 }
 
 async function runLoginFlow(context: vscode.ExtensionContext): Promise<boolean> {
@@ -177,9 +183,15 @@ async function openProblemOnce(
     return;
   }
 
+  const dataRoot = getDataRoot(workspaceFolder);
+
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: '문제를 불러오는 중...' },
-    async () => {
+    async (progress) => {
+      // 다른 기기에서 푼 내용을 먼저 받아온다. 실패해도 문제 풀이는 계속한다.
+      progress.report({ message: '동기화 중...' });
+      await gitSync.pullBeforeOpen(dataRoot);
+
       let problem: ProblemData;
       try {
         const html = await fetchProblemHtml(id, cookie);
@@ -200,7 +212,7 @@ async function openProblemOnce(
         return;
       }
 
-      const dir = problemDir(getDataRoot(workspaceFolder), id);
+      const dir = problemDir(dataRoot, id);
       const solutionFile = solutionPath(dir);
       try {
         fs.mkdirSync(dir, { recursive: true });
@@ -307,6 +319,10 @@ async function runTestsForCurrentProblem(trigger: RunTrigger): Promise<void> {
     state.setLastRun({ results, debugOutput });
     recordRun(problem.dir, buildRunEvent(results, runContext));
     const passed = results.filter((r) => r.pass).length;
+    // 전체 통과했을 때만 커밋한다 — 풀다 만 코드로 히스토리를 채우지 않는다.
+    if (results.length > 0 && passed === results.length) {
+      void gitSync.commitOnPass(problem.dir, { id: problem.id, title: problem.title });
+    }
     const channel = getOutputChannel();
     channel.clear();
     channel.appendLine('(참고: 로컬 측정치이며 실제 채점 서버 성능과 다를 수 있습니다)');
@@ -350,6 +366,9 @@ async function runTestsForCurrentProblem(trigger: RunTrigger): Promise<void> {
 export function activate(context: vscode.ExtensionContext) {
   state = new ExtensionState(context.workspaceState);
   state.restore((p) => fs.existsSync(solutionPath(p.dir)));
+
+  gitSync = new GitSync((message) => getOutputChannel().appendLine(message));
+  context.subscriptions.push(gitSync);
 
   const treeProvider = new ProblemsTreeProvider(state, context.globalState, context.subscriptions);
   context.subscriptions.push(
@@ -581,7 +600,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-export function deactivate() {}
+export async function deactivate(): Promise<void> {
+  // 디바운스 대기 중인 push가 있으면 창이 닫히기 전에 보낸다.
+  if (gitSync && lastDataRoot) {
+    await gitSync.flush(lastDataRoot);
+  }
+}
 
 function extractProblemId(input: string): string {
   const match = input.match(/lessons\/(\d+)/);
