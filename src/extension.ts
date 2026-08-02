@@ -18,11 +18,13 @@ import {
   casesPath,
   problemMdPath,
   runsLogPath,
+  attemptPath,
 } from './core/paths';
 import {
   appendRunEvent,
   buildErrorRunEvent,
   buildRunEvent,
+  saveAttemptSnapshot,
   RunContext,
   RunTrigger,
 } from './core/runLog';
@@ -275,11 +277,24 @@ let autoRunPending = false;
  * runs.jsonl 기록. 로그가 실패해도 테스트 결과 자체는 이미 나왔으므로
  * 사용자 흐름을 막지 않고 출력 채널에만 남긴다.
  */
-function recordRun(problemDirPath: string, event: ReturnType<typeof buildRunEvent>): void {
+function recordRun(
+  problemDirPath: string,
+  event: ReturnType<typeof buildRunEvent>,
+  code?: string
+): void {
   try {
     appendRunEvent(runsLogPath(problemDirPath), event);
   } catch (err) {
     getOutputChannel().appendLine(`[runs.jsonl] 기록 실패: ${(err as Error).message}`);
+  }
+
+  // 코드가 바뀐 실행만 스냅샷으로 남긴다. 나중에 "무엇을 바꿔서 통과했는지"를
+  // diff로 되짚기 위한 것이다.
+  if (!event.code_hash || code === undefined) return;
+  try {
+    saveAttemptSnapshot(attemptPath(problemDirPath, event.code_hash), code);
+  } catch (err) {
+    getOutputChannel().appendLine(`[attempts] 스냅샷 실패: ${(err as Error).message}`);
   }
 }
 
@@ -358,7 +373,7 @@ async function runTestsForCurrentProblem(trigger: RunTrigger): Promise<void> {
       }
     );
     state.setLastRun({ results, debugOutput });
-    recordRun(problem.dir, buildRunEvent(results, runContext));
+    recordRun(problem.dir, buildRunEvent(results, runContext), runContext.code);
     const passed = results.filter((r) => r.pass).length;
     // 전체 통과했을 때만 위키로 내보내고 커밋한다 — 풀다 만 코드로 히스토리를 채우지 않는다.
     if (results.length > 0 && passed === results.length) {
@@ -394,7 +409,7 @@ async function runTestsForCurrentProblem(trigger: RunTrigger): Promise<void> {
       return;
     }
     // 취소는 시도가 아니지만, 실행 실패(문법 오류·타임아웃)는 기록할 가치가 있는 시행착오다.
-    recordRun(problem.dir, buildErrorRunEvent(runContext));
+    recordRun(problem.dir, buildErrorRunEvent(runContext), runContext.code);
     if (reveal) {
       vscode.window.showErrorMessage(`테스트 실행 실패: ${(err as Error).message}`);
     } else {

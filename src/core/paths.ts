@@ -10,6 +10,14 @@ export const PROBLEM_FILE = 'problem.md';
 export const RUNS_FILE = 'runs.jsonl';
 
 /**
+ * 시도 스냅샷 폴더. 코드가 바뀔 때만 한 벌씩 남긴다.
+ *
+ * runs.jsonl에는 해시만 있어서 "무엇을 바꿔서 통과했는지"를 알 수 없다.
+ * 스냅샷이 있으면 실패→통과 전환의 diff를 뽑아 `## 막혔던 지점`의 실마리로 쓸 수 있다.
+ */
+export const ATTEMPTS_DIR = 'attempts';
+
+/**
  * `programmers.dataRoot` 설정을 절대 경로로 해석한다.
  *
  * - 빈 값: `<workspace>/.programmers` (기존 동작 유지)
@@ -54,4 +62,8 @@ export function problemMdPath(dir: string): string {
 
 export function runsLogPath(dir: string): string {
   return path.join(dir, RUNS_FILE);
+}
+
+export function attemptPath(dir: string, codeHash: string): string {
+  return path.join(dir, ATTEMPTS_DIR, `${codeHash}.py`);
 }

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import { RunResult } from './types';
 
 /** 수동 실행인지, 저장 시 자동 실행인지. 자동 실행은 같은 시도를 여러 번 기록하게 된다. */
@@ -70,4 +71,19 @@ export function serializeRunEvent(event: RunEvent): string {
  */
 export function appendRunEvent(logPath: string, event: RunEvent): void {
   fs.appendFileSync(logPath, serializeRunEvent(event), 'utf-8');
+}
+
+/**
+ * 코드가 처음 보는 형태일 때만 스냅샷을 남긴다.
+ *
+ * 같은 코드로 여러 번 저장해도 파일은 하나다 — 파일명이 곧 해시이기 때문에
+ * 중복 저장이 구조적으로 불가능하다. 큐가 파일명으로 중복을 막는 것과 같은 방식이다.
+ *
+ * @returns 새로 남겼으면 true
+ */
+export function saveAttemptSnapshot(snapshotPath: string, code: string): boolean {
+  if (fs.existsSync(snapshotPath)) return false;
+  fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+  fs.writeFileSync(snapshotPath, code, 'utf-8');
+  return true;
 }

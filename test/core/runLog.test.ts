@@ -6,6 +6,7 @@ import {
   buildErrorRunEvent,
   buildRunEvent,
   hashCode,
+  saveAttemptSnapshot,
   serializeRunEvent,
   RunContext,
 } from '../../src/core/runLog';
@@ -113,5 +114,40 @@ describe('appendRunEvent', () => {
 
     appendRunEvent(logPath, buildRunEvent([pass], context));
     expect(fs.readFileSync(logPath, 'utf-8').startsWith(first)).toBe(true);
+  });
+});
+
+describe('saveAttemptSnapshot', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'attempts-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('writes the code on first sight', () => {
+    const target = path.join(dir, 'attempts', 'abc123.py');
+    expect(saveAttemptSnapshot(target, 'print(1)')).toBe(true);
+    expect(fs.readFileSync(target, 'utf-8')).toBe('print(1)');
+  });
+
+  test('does not rewrite the same code twice', () => {
+    // 파일명이 곧 해시라 중복 저장이 구조적으로 불가능하다.
+    const target = path.join(dir, 'attempts', 'abc123.py');
+    saveAttemptSnapshot(target, 'print(1)');
+    expect(saveAttemptSnapshot(target, 'print(1)')).toBe(false);
+  });
+
+  test('keeps one file per distinct code', () => {
+    saveAttemptSnapshot(path.join(dir, 'attempts', 'aaa.py'), 'v1');
+    saveAttemptSnapshot(path.join(dir, 'attempts', 'bbb.py'), 'v2');
+    expect(fs.readdirSync(path.join(dir, 'attempts')).sort()).toEqual(['aaa.py', 'bbb.py']);
+  });
+
+  test('creates the directory when missing', () => {
+    expect(saveAttemptSnapshot(path.join(dir, 'deep', 'attempts', 'a.py'), 'x')).toBe(true);
   });
 });
