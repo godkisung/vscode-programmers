@@ -40,7 +40,58 @@ function createTurndown(): TurndownService {
 
 export function htmlToMarkdown(html: string): string {
   if (!html.trim()) return '';
-  return createTurndown().turndown(html).trim();
+  return cleanDescription(createTurndown().turndown(html));
+}
+
+/** 헤딩으로 시작하는 줄인지. 코드 블록 안의 `#` 주석은 제외한다. */
+const HEADING = /^(#{1,6})\s+(.*)$/;
+/** 문제 페이지가 붙이는 운영 공지. 문제를 푸는 데는 쓸모가 없다. */
+const NOTICE = /^\s*※\s*공지/;
+/** 페이지 자체의 입출력 예 절. 노트는 `## 테스트 케이스`를 따로 만들므로 중복이다. */
+const EXAMPLES_HEADING = /^입출력\s*예\s*$/;
+
+/**
+ * 스크래핑한 설명을 노트에 넣기 좋게 다듬는다.
+ *
+ * - 헤딩을 `###` 이하로 낮춘다. 노트의 절은 `##`이므로 그보다 얕으면 목차가 뒤집힌다
+ * - 운영 공지(`※ 공지 - ...`)를 버린다
+ * - 페이지의 입출력 예 표를 버린다 — 같은 표가 `## 테스트 케이스`에 다시 나온다
+ *   (`입출력 예 설명`은 남긴다. 표가 아니라 해설이다)
+ */
+export function cleanDescription(markdown: string): string {
+  const out: string[] = [];
+  let inFence = false;
+  let skipping = false;
+
+  for (const line of markdown.split('\n')) {
+    if (line.trimStart().startsWith('```')) {
+      inFence = !inFence;
+      if (!inFence) {
+        out.push(line);
+        continue;
+      }
+    }
+
+    if (inFence) {
+      if (!skipping) out.push(line);
+      continue;
+    }
+
+    const heading = HEADING.exec(line);
+    if (heading) {
+      skipping = EXAMPLES_HEADING.test(heading[2].trim());
+      if (skipping) continue;
+      // 페이지의 헤딩 레벨은 의미가 없다 — `문제 설명`이 h6인데 `제한사항`이 h5다.
+      // 전부 같은 깊이로 평탄화하고, 노트의 `##`보다는 한 단계 아래로 둔다.
+      out.push(`### ${heading[2]}`);
+      continue;
+    }
+
+    if (skipping || NOTICE.test(line)) continue;
+    out.push(line);
+  }
+
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**

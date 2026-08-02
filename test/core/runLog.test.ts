@@ -6,6 +6,7 @@ import {
   buildErrorRunEvent,
   buildRunEvent,
   hashCode,
+  normalizeHost,
   saveAttemptSnapshot,
   serializeRunEvent,
   RunContext,
@@ -149,5 +150,21 @@ describe('saveAttemptSnapshot', () => {
 
   test('creates the directory when missing', () => {
     expect(saveAttemptSnapshot(path.join(dir, 'deep', 'attempts', 'a.py'), 'x')).toBe(true);
+  });
+});
+
+describe('normalizeHost', () => {
+  test('drops the mDNS suffix so one machine is one name', () => {
+    expect(normalizeHost('kisungui-MacBookAir.local')).toBe('kisungui-MacBookAir');
+    expect(normalizeHost('ks-server.lan')).toBe('ks-server');
+  });
+
+  test('leaves a plain hostname alone', () => {
+    expect(normalizeHost('ks-server')).toBe('ks-server');
+  });
+
+  test('is applied when building an event', () => {
+    const event = buildRunEvent([pass], { ...context, host: 'macbook.local' });
+    expect(event.host).toBe('macbook');
   });
 });

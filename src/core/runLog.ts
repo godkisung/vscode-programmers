@@ -37,10 +37,15 @@ export function hashCode(source: string): string {
   return createHash('sha256').update(source, 'utf-8').digest('hex').slice(0, 12);
 }
 
+/** mDNS 접미사를 뗀다. `kisungui-MacBookAir.local`과 `kisungui-MacBookAir`는 같은 기기다. */
+export function normalizeHost(hostname: string): string {
+  return hostname.replace(/\.(local|lan|localdomain)$/i, '');
+}
+
 function base(context: RunContext): Omit<RunEvent, 'result' | 'passed' | 'total'> {
   return {
     ts: (context.now ?? new Date()).toISOString(),
-    host: context.host ?? os.hostname(),
+    host: normalizeHost(context.host ?? os.hostname()),
     trigger: context.trigger,
     code_hash: context.code === undefined ? null : hashCode(context.code),
   };

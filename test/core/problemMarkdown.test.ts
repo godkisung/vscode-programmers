@@ -1,4 +1,4 @@
-import { buildProblemMarkdown, htmlToMarkdown } from '../../src/core/problemMarkdown';
+import { buildProblemMarkdown, cleanDescription, htmlToMarkdown } from '../../src/core/problemMarkdown';
 import { ProblemData } from '../../src/core/types';
 
 const problem: ProblemData = {
@@ -136,5 +136,49 @@ describe('level in frontmatter', () => {
   test('writes null rather than guessing when the page had none', () => {
     // 난이도는 사실 정보다. 모르면 비워두는 게 맞다.
     expect(buildProblemMarkdown({ ...problem, level: null }, FIXED_DATE)).toContain('level: null');
+  });
+});
+
+describe('cleanDescription', () => {
+  test('lowers page headings so the note outline is not inverted', () => {
+    // 노트의 절은 `##`이므로 설명 안의 헤딩은 그보다 깊어야 한다.
+    const md = cleanDescription('###### 문제 설명\n\n본문\n\n##### 제한사항\n\n- 조건');
+    expect(md).toContain('### 문제 설명');
+    expect(md).toContain('### 제한사항');
+    expect(md).not.toMatch(/^#{4,6} /m);
+  });
+
+  test('keeps headings that are already shallow enough', () => {
+    expect(cleanDescription('### 이미 깊다\n\n본문')).toContain('### 이미 깊다');
+  });
+
+  test('drops operational notices', () => {
+    const md = cleanDescription('본문\n\n※ 공지 - 2022년 3월 11일 테스트케이스가 추가되었습니다.\n');
+    expect(md).not.toContain('※ 공지');
+    expect(md).toContain('본문');
+  });
+
+  test('drops the page examples table because the note builds its own', () => {
+    const md = cleanDescription(
+      '### 설명\n\n본문\n\n##### 입출력 예\n\n| s | result |\n| --- | --- |\n| "ab" | 0 |\n\n##### 입출력 예 설명\n\n해설이다\n'
+    );
+    expect(md).not.toContain('| s | result |');
+    expect(md).toContain('본문');
+  });
+
+  test('keeps the explanation section, which is not a duplicate', () => {
+    const md = cleanDescription('##### 입출력 예\n\n| a |\n\n##### 입출력 예 설명\n\n해설이다\n');
+    expect(md).toContain('### 입출력 예 설명');
+    expect(md).toContain('해설이다');
+  });
+
+  test('leaves code blocks alone', () => {
+    const md = cleanDescription('본문\n\n```python\n# 주석은 헤딩이 아니다\n#### 이것도\n```\n');
+    expect(md).toContain('# 주석은 헤딩이 아니다');
+    expect(md).toContain('#### 이것도');
+  });
+
+  test('collapses the blank lines left behind', () => {
+    expect(cleanDescription('a\n\n\n\n\nb')).toBe('a\n\nb');
   });
 });
